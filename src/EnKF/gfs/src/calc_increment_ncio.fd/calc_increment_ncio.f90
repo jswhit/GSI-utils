@@ -20,9 +20,9 @@ PROGRAM calc_increment_ncio
 !   output files: filename_inc (3rd command line arg)
 
 !   4th command line arg is logical for controlling whether microphysics
-!   increment is computed. 
+!   increment should not be computed. 
 !   5th command line arg is logical for controlling whether delz
-!   increment should be computed
+!   increment should not be computed
 !   6th command line arg is logical for controlling whether humidity
 !   and microphysics vars should be tapered to zero in stratosphere.
 !   The vertical profile of the taper is controlled by ak_top and ak_bot.
@@ -38,10 +38,10 @@ PROGRAM calc_increment_ncio
 !
 !$$$
 
-  use module_ncio, only: open_dataset, create_dataset, read_attribute, &
-                         Dataset, Dimension, close_dataset, &
-                         read_vardata, write_attribute, write_vardata, &
-                         has_var, has_attr, get_dim
+  use module_fv3gfs_ncio, only: open_dataset, create_dataset, read_attribute, &
+                           Dataset, Dimension, close_dataset, &
+                           read_vardata, write_attribute, write_vardata, &
+                           has_var, has_attr, get_dim
   use netcdf
 
   implicit none
@@ -50,6 +50,7 @@ PROGRAM calc_increment_ncio
   external :: write_ncdata3d
 
   character*500 filename_anal,filename_inc,filename_fg
+  character*3 charnin
   character(len=nf90_max_name) :: ncvarname
   integer k,nvar,ndims,nlats,nlons,nlevs,iret,nlons2,nlats2,nlevs2
   real, allocatable, dimension(:)     :: lats_tmp, lats, lons, ak, bk, ilevs, levs
@@ -63,27 +64,43 @@ PROGRAM calc_increment_ncio
   integer, dimension(1) :: dimid_1d
   integer varid_lon,varid_lat,varid_lev,varid_ilev,varid_hyai,varid_hybi,&
           dimid_lon,dimid_lat,dimid_lev,dimid_ilev,ncfileid,ncstatus
-  logical :: no_mpinc, no_delzinc, has_dpres, has_delz, taper_strat
-  character(len=10) :: bufchar
-  real rd,rv,fv,grav,ak_bot,ak_top
+  logical :: no_mpinc, no_delzinc, has_dpres, has_delz, taper_strat, taper_pbl, lexist
+  real rd,rv,fv,grav,ak_bot,ak_top,bk_bot,bk_top,forcing_factor
+  namelist /setup/ ak_top, ak_bot, bk_top, bk_bot, forcing_factor,&
+                   taper_strat, taper_pbl, no_mpinc, no_delzinc
 
   rd     = 2.8705e+2
   rv     = 4.6150e+2
   fv     = rv/rd-1.    ! used in virtual temperature equation 
   grav   = 9.80665
+  ! defaults for namelist
+  forcing_factor = 1.00
+  no_mpinc = .true.
+  no_delzinc = .false.
+  taper_strat = .false.
+  taper_strat = .false.
   ! damp humidity increments between these two levels if taper_strat=T
   ak_bot = 10000. ! units Pa
   ak_top = 5000.
+  ! tapering near surface (if taper_pbl=T)
+  bk_bot = 1.0
+  bk_top = 0.95
 
   call getarg(1,filename_fg)    ! first guess ncio file
   call getarg(2,filename_anal)  ! analysis ncio file
   call getarg(3,filename_inc)   ! output increment file
-  call getarg(4, bufchar)
-  read(bufchar,'(L)') no_mpinc  ! if T, no microphysics increments computed
-  call getarg(5, bufchar)
-  read(bufchar,'(L)') no_delzinc  ! if T, no delz increments computed
-  call getarg(6, bufchar)
-  read(bufchar,'(L)') taper_strat  ! if T, taper sphum,liq_wat,ice_wat in strat
+
+
+  inquire(file='calc_increment_ncio.nml', exist=lexist)
+  if ( lexist ) then
+    open(file='calc_increment_ncio.nml', unit=92, status='old', &
+         form='formatted', action='read', access='sequential')
+    read(92,nml=setup)
+    close(92)
+  else
+    write(6,*) 'calc_increment_ncio.nml does not exist and should, ABORT!'
+    stop 99
+  endif
 
   write(6,*)'CALC_INCREMENT_NCIO:'
   write(6,*)'filename_fg=',trim(filename_fg)
@@ -92,6 +109,14 @@ PROGRAM calc_increment_ncio
   write(6,*)'no_mpinc',no_mpinc
   write(6,*)'no_delzinc',no_delzinc
   write(6,*)'taper_strat',taper_strat
+  if (taper_strat) then
+    write(6,*), 'ak_bot,ak_top',ak_bot,ak_top
+  endif
+  write(6,*)'taper_pbl',taper_pbl
+  if (taper_pbl) then
+    write(6,*), 'bk_bot,bk_top',bk_bot,bk_top
+  endif
+  write(6,*)'iau_forcing_factor',forcing_factor
 
   dset_fg = open_dataset(trim(filename_fg),errcode=iret)
   if (iret .ne. 0) then
@@ -265,9 +290,22 @@ PROGRAM calc_increment_ncio
   dimid_3d(2) = dimid_lat
   dimid_3d(3) = dimid_lev
 
-  has_dpres = has_var(dset_fg,'dpres')
-  has_delz  = has_var(dset_fg,'delz')
-  !has_dpres = .false.; has_delz = .false. ! for debugging only
+  ! if DONT_USE_DPRES env var set, infer the dpres
+  ! increment from the ps increment even if dpres exists.
+  call getenv('DONT_USE_DPRES',charnin)
+  if (charnin .eq. '') then
+     has_dpres = has_var(dset_fg,'dpres')
+  else
+     has_dpres = .false.
+  endif
+  ! if DONT_USE_DELZ env var set, infer the delz
+  ! increment from the ps,Tv increment even if delz exists.
+  call getenv('DONT_USE_DELZ',charnin)
+  if (charnin .eq. '') then
+     has_delz  = has_var(dset_fg,'delz')
+  else
+     has_delz = .false.
+  endif
   print *,'has_dpres ',has_dpres
   print *,'has_delz ',has_delz
 
@@ -286,17 +324,28 @@ PROGRAM calc_increment_ncio
   enddo
   ! taper function for humidity, ice and liq water increments.
   taper_vert=1.
-  if (taper_strat) print *,'profile to taper strat humid inc (k,ak,bk,taper):'
-  do k=1,nlevs
-     if (k < nlevs/2 .and. (ak(k) <= ak_bot .and. ak(k) >= ak_top)) then
-        taper_vert(:,:,k)= (ak(k) - ak_top)/(ak_bot - ak_top)
-     else if (bk(k) .eq. 0. .and. ak(k) < ak_top) then
-        taper_vert(:,:,k) = 0.
-     endif
-     if (taper_strat) then
-       print *,k,ak(k),bk(k),taper_vert(1,1,k)
-     endif
-  enddo
+  if (taper_strat) then
+     do k=1,nlevs
+        if (k < nlevs/2 .and. (ak(k) <= ak_bot .and. ak(k) >= ak_top)) then
+           taper_vert(:,:,k)= (ak(k) - ak_top)/(ak_bot - ak_top)
+        else if (bk(k) .eq. 0. .and. ak(k) < ak_top) then
+           taper_vert(:,:,k) = 0.
+        endif
+     enddo
+  endif
+  if (taper_pbl) then
+     do k=1,nlevs
+        if (bk(k) >= bk_top) then
+           taper_vert(:,:,k)= 1.-(bk(k) - bk_top)/(1.0 - bk_top)
+        endif
+     enddo
+  endif
+  if (taper_strat .or. taper_pbl) then
+     print *,'profile to taper increments (k,ak,bk,taper):'
+     do k=1,nlevs
+        print *,k,ak(k),bk(k),taper_vert(1,1,k)
+     enddo
+  endif
 
   do nvar=1,dset_fg%nvars
      ndims = dset_fg%variables(nvar)%ndims
@@ -327,6 +376,7 @@ PROGRAM calc_increment_ncio
            ncvarname = 'ice_wat_inc'
         endif
         if (trim(ncvarname) /= 'none') then
+           print *,'reading ',trim(adjustl(dset_fg%variables(nvar)%name))
            call read_vardata(dset_fg,trim(dset_fg%variables(nvar)%name),values_3d_fg)
            call read_vardata(dset_anal,trim(dset_fg%variables(nvar)%name),values_3d_anal)
            ! increment (flip lats)
@@ -337,6 +387,7 @@ PROGRAM calc_increment_ncio
            else
                values_3d_inc(:,nlats:1:-1,:) = values_3d_anal - values_3d_fg
            endif 
+           values_3d_inc = forcing_factor*values_3d_inc
            call write_ncdata3d(values_3d_inc,ncvarname,nlons,nlats,nlevs,ncfileid,dimid_3d)
         endif
      endif ! ndims == 4
@@ -349,6 +400,7 @@ PROGRAM calc_increment_ncio
      do k=1,nlevs
         values_3d_inc(:,:,k) = values_2d_inc*(bk(k+1)-bk(k))
      enddo
+     values_3d_inc = forcing_factor*values_3d_inc
      call write_ncdata3d(values_3d_inc,ncvarname,nlons,nlats,nlevs,ncfileid,dimid_3d)
   endif
   ! infer delz increment from background, analysis ps & Tv
@@ -375,6 +427,7 @@ PROGRAM calc_increment_ncio
      !print *,'min/max anal delz',minval(delza),maxval(delza)
      !print *,'min/max fg delz',minval(delzb),maxval(delzb)
      values_3d_inc(:,nlats:1:-1,:) = delza - delzb
+     values_3d_inc = forcing_factor*values_3d_inc
      call write_ncdata3d(values_3d_inc,ncvarname,nlons,nlats,nlevs,ncfileid,dimid_3d)
   endif
 
