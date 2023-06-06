@@ -38,7 +38,7 @@ PROGRAM calc_increment_ncio
 !
 !$$$
 
-  use module_fv3gfs_ncio, only: open_dataset, create_dataset, read_attribute, &
+  use module_ncio, only: open_dataset, create_dataset, read_attribute, &
                            Dataset, Dimension, close_dataset, &
                            read_vardata, write_attribute, write_vardata, &
                            has_var, has_attr, get_dim
@@ -57,17 +57,19 @@ PROGRAM calc_increment_ncio
   real, allocatable, dimension(:,:)   :: values_2d_fg,values_2d_anal,values_2d_inc,&
                                          ps_fg, ps_anal
   real, allocatable, dimension(:,:,:) :: values_3d_fg,values_3d_anal,values_3d_inc,&
-                                         taper_vert,q_fg, q_anal, tmp_fg, tmp_anal, delzb, delza
+                      inc,taper_vert,taper_vert_ozone,taper_vert_pbl,q_fg, q_anal, tmp_fg, tmp_anal, delzb, delza
   type(Dataset) :: dset_anal,dset_fg
   type(Dimension) :: londim,latdim,levdim
   integer, dimension(3) :: dimid_3d
   integer, dimension(1) :: dimid_1d
   integer varid_lon,varid_lat,varid_lev,varid_ilev,varid_hyai,varid_hybi,&
           dimid_lon,dimid_lat,dimid_lev,dimid_ilev,ncfileid,ncstatus
-  logical :: no_mpinc, no_delzinc, has_dpres, has_delz, taper_strat, taper_pbl, lexist
-  real rd,rv,fv,grav,ak_bot,ak_top,bk_bot,bk_top,forcing_factor
+  logical :: no_mpinc, no_delzinc, has_dpres, has_delz, taper_strat, taper_pbl, lexist, &
+             taper_strat_ozone
+  real rd,rv,fv,grav,ak_bot,ak_top,bk_bot,bk_top,forcing_factor,ak_top_ozone,ak_bot_ozone
   namelist /setup/ ak_top, ak_bot, bk_top, bk_bot, forcing_factor,&
-                   taper_strat, taper_pbl, no_mpinc, no_delzinc
+                   ak_top_ozone, ak_bot_ozone,&
+                   taper_strat, taper_strat_ozone, taper_pbl, no_mpinc, no_delzinc
 
   rd     = 2.8705e+2
   rv     = 4.6150e+2
@@ -77,11 +79,14 @@ PROGRAM calc_increment_ncio
   forcing_factor = 1.00
   no_mpinc = .true.
   no_delzinc = .false.
-  taper_strat = .false.
-  taper_strat = .false.
+  taper_strat = .false. ! taper humidity, microphysics in stratosphere
+  taper_strat_ozone = .true. ! taper ozone near model top 
+  taper_pbl = .false. ! taper everything in PBL (controlled by bk_top,bk_bot)
   ! damp humidity increments between these two levels if taper_strat=T
   ak_bot = 10000. ! units Pa
   ak_top = 5000.
+  ak_bot_ozone = 0. ! units Pa
+  ak_top_ozone = 10.
   ! tapering near surface (if taper_pbl=T)
   bk_bot = 1.0
   bk_top = 0.95
@@ -115,6 +120,10 @@ PROGRAM calc_increment_ncio
   write(6,*)'taper_pbl',taper_pbl
   if (taper_pbl) then
     write(6,*), 'bk_bot,bk_top',bk_bot,bk_top
+  endif
+  write(6,*)'taper_strat_ozone',taper_strat_ozone
+  if (taper_strat_ozone) then
+    write(6,*), 'ak_bot_ozone,ak_top_ozone',ak_bot_ozone,ak_top_ozone
   endif
   write(6,*)'iau_forcing_factor',forcing_factor
 
@@ -312,6 +321,9 @@ PROGRAM calc_increment_ncio
   ! ps increment.
   allocate(values_2d_inc(nlons,nlats))
   allocate(taper_vert(nlons,nlats,nlevs))
+  allocate(taper_vert_pbl(nlons,nlats,nlevs))
+  allocate(taper_vert_ozone(nlons,nlats,nlevs))
+  allocate(inc(nlons,nlats,nlevs))
   allocate(values_3d_inc(nlons,nlats,nlevs))
   do nvar=1,dset_fg%nvars
      ndims = dset_fg%variables(nvar)%ndims
@@ -324,6 +336,8 @@ PROGRAM calc_increment_ncio
   enddo
   ! taper function for humidity, ice and liq water increments.
   taper_vert=1.
+  taper_vert_pbl=1.
+  taper_vert_ozone=1.
   if (taper_strat) then
      do k=1,nlevs
         if (k < nlevs/2 .and. (ak(k) <= ak_bot .and. ak(k) >= ak_top)) then
@@ -333,17 +347,26 @@ PROGRAM calc_increment_ncio
         endif
      enddo
   endif
-  if (taper_pbl) then
+  if (taper_strat_ozone) then
      do k=1,nlevs
-        if (bk(k) >= bk_top) then
-           taper_vert(:,:,k)= 1.-(bk(k) - bk_top)/(1.0 - bk_top)
+        if (k < nlevs/2 .and. (ak(k) <= ak_bot_ozone .and. ak(k) >= ak_top_ozone)) then
+           taper_vert_ozone(:,:,k)= (ak(k) - ak_top_ozone)/(ak_bot_ozone - ak_top_ozone)
+        else if (bk(k) .eq. 0. .and. ak(k) < ak_top_ozone) then
+           taper_vert_ozone(:,:,k) = 0.
         endif
      enddo
   endif
-  if (taper_strat .or. taper_pbl) then
-     print *,'profile to taper increments (k,ak,bk,taper):'
+  if (taper_pbl) then
      do k=1,nlevs
-        print *,k,ak(k),bk(k),taper_vert(1,1,k)
+        if (bk(k) >= bk_top) then
+           taper_vert_pbl(:,:,k)= 1.-(bk(k) - bk_top)/(1.0 - bk_top)
+        endif
+     enddo
+  endif
+  if (taper_strat_ozone .or. taper_strat .or. taper_pbl) then
+     print *,'profile to taper increments (k,ak,bk,taper,taper_ozone,taper_pbl):'
+     do k=1,nlevs
+        print *,k,ak(k),bk(k),taper_vert(1,1,k),taper_vert_ozone(1,1,k),taper_vert_pbl(1,1,k)
      enddo
   endif
 
@@ -380,13 +403,19 @@ PROGRAM calc_increment_ncio
            call read_vardata(dset_fg,trim(dset_fg%variables(nvar)%name),values_3d_fg)
            call read_vardata(dset_anal,trim(dset_fg%variables(nvar)%name),values_3d_anal)
            ! increment (flip lats)
+           inc = values_3d_anal - values_3d_fg
            if (taper_strat .and. (trim(ncvarname) .eq. 'sphum_inc' .or. &
                                   trim(ncvarname) .eq. 'liq_wat_inc' .or. &
                                   trim(ncvarname) .eq. 'ice_wat_inc')) then
-               values_3d_inc(:,nlats:1:-1,:) = taper_vert*(values_3d_anal - values_3d_fg)
-           else
-               values_3d_inc(:,nlats:1:-1,:) = values_3d_anal - values_3d_fg
+               inc = taper_vert*inc
            endif 
+           if (taper_strat_ozone .and. trim(ncvarname) .eq. 'o3mr_inc') then
+               inc = taper_vert_ozone*inc
+           endif
+           if (taper_pbl) then
+               inc = taper_vert_pbl*inc
+           endif 
+           values_3d_inc(:,nlats:1:-1,:) = inc
            values_3d_inc = forcing_factor*values_3d_inc
            call write_ncdata3d(values_3d_inc,ncvarname,nlons,nlats,nlevs,ncfileid,dimid_3d)
         endif
