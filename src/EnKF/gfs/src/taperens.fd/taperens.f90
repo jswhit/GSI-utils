@@ -65,6 +65,9 @@ program taperens
   if (mype==0) call w3tagb('TAPERENS',2011,0319,0055,'NP25')
 
 ! defaults for namelist
+! for hybrid gain, specify alpha,filename_fgmean,filename_3dvar (don't specify
+! filename_meanin)
+! for recentering to get hybcov analysis, leave alpha=0, specify filename_meanin
   alpha=0 ! no hybrid gain
   beta=1
   cliptracers = .false.
