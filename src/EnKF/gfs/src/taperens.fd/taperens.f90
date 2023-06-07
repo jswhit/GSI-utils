@@ -204,7 +204,7 @@ program taperens
         call read_vardata(dseti,trim(dseti%variables(nvar)%name),values_2d_i)
         call mpi_allreduce(values_2d_i,values_2d_mean,lonb*latb,mpi_real4,mpi_sum,mpi_comm_world,iret)
         values_2d_mean = values_2d_mean*rnanals
-        print *,mype,'ps mean',minval(values_2d_mean),maxval(values_2d_mean)
+        if (mype .eq. 0) print *,'ps mean',minval(values_2d_mean),maxval(values_2d_mean)
         if (hybgain) then ! hybrid gain (blend 3dvar and EnKF mean incr)
            call read_vardata(dsetfgm,trim(dseti%variables(nvar)%name),values_2d_fgmean)
            call read_vardata(dset3dvar,trim(dseti%variables(nvar)%name),values_2d_3dvar)
