@@ -140,9 +140,9 @@ program taperens
   mype1 = mype+1
   write(charnanal,'(i3.3)') mype1
   dseti  = open_dataset(trim(filenamein)//"_mem"//charnanal)
-  londim = get_dim(dsetmi,'grid_xt'); lonb = londim%len
-  latdim = get_dim(dsetmi,'grid_yt'); latb = latdim%len
-  levdim = get_dim(dsetmi,'pfull');   levs = levdim%len
+  londim = get_dim(dseti,'grid_xt'); lonb = londim%len
+  latdim = get_dim(dseti,'grid_yt'); latb = latdim%len
+  levdim = get_dim(dseti,'pfull');   levs = levdim%len
   dseto  = create_dataset(trim(filenameout)//"_mem"//charnanal, dseti, copy_vardata=.true.)
   if (mype .eq. 0) then
      if (hybgain) then
