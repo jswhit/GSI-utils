@@ -5,16 +5,18 @@ program psop
  use module_ncio, only: open_dataset, create_dataset, read_attribute, &
                         Dataset, Dimension, close_dataset, has_attr, has_var, &
                         read_vardata, write_attribute, write_vardata, get_dim
+ use nc_diag_write_mod, only: nc_diag_init, nc_diag_header, nc_diag_metadata, &
+                              nc_diag_write, nc_diag_data2d
  implicit none
  include  'mpif.h'
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
- character(len=120) filenamein,obsfile,filename,obsfileout
+ character(len=120) filenamein,obsfile,filename,diag_file
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
          nproc,numproc,nob,nanal,j,iunit,iunitsig,fhmin,fhmax,fhout,ntimes,&
          nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,iunito,idate
- integer mpi_status(mpi_status_size)
+ integer mpi_status(mpi_status_size),ianldate
  real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
       delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
  real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg
@@ -164,19 +166,12 @@ program psop
  oblocx = deg2rad*oblocx
  oblocy = deg2rad*oblocy
 
- write(charnanal,'(i3.3)') nanal
- if (nanal .eq. nanals+1) then
-    obsfileout = "diag_conv_ges."//datestring//"_ensmean"
- else
-    obsfileout = "diag_conv_ges."//datestring//"_mem"//charnanal
- end if
- open(iunito,form="unformatted",file=trim(adjustl(obsfileout)),status='replace',convert='native')
- 
  ntime = 0
  do nfhr=fhmin,fhmax,fhout
  ntime = ntime + 1
 
  write(charfhr,'(i2.2)') nfhr
+ write(charnanal,'(i3.3)') nanal
  if (nanal .eq. nanals+1) then
     filenamein = "sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
  else
@@ -311,7 +306,7 @@ program psop
        altob = palt(ob(nob),zob(nob),grav,rd)
        if (altob .lt. 850. .or. altob .gt. 1090.) then
           if (nproc .eq. numproc) print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),zob(nob),anal_obz(nob),altob
-          iuseob(nob)=0
+          iuseob(nob)=-1
           nn = nn + 1
        end if
     end if   
@@ -347,57 +342,46 @@ program psop
 
  call MPI_Barrier(MPI_COMM_WORLD,ierr)
 
-! do ii=1,nobstot
-!    if (iuseob(ii) .eq. 0) stdev(ii) = 1.e4
-!    cdiagbuf(ii)    = trim(adjustl(statid(ii)))  ! station id
-!
-!    rdiagbuf(1,ii)  = stattype(ii)       ! observation type
-!    rdiagbuf(2,ii)  = stattype(ii)       ! observation subtype
-!    rdiagbuf(3,ii)  = rad2deg*oblocy(ii) ! observation latitude (degrees)
-!    rdiagbuf(4,ii)  = rad2deg*oblocx(ii) ! observation longitude (degrees)
-!    rdiagbuf(5,ii)  = zob(ii)            ! station elevation (meters)
-!    rdiagbuf(6,ii)  = ob(ii)             ! observation pressure (hPa)
-!    rdiagbuf(7,ii)  = anal_obz(ii)       ! observation height (meters)
-!    rdiagbuf(8,ii)  = obtime(ii)         ! obs time (hours relative to analysis time)
-!
-!    rdiagbuf(9,ii)  = 1.                 ! input prepbufr qc or event mark
-!    rdiagbuf(10,ii) = 1.e30              ! setup qc or event mark
-!    rdiagbuf(11,ii) = 1.                 ! read_prepbufr data usage flag
-!    !if(iuseob(ii) .eq. 1) then
-!    !   rdiagbuf(12,ii) = 1.              ! analysis usage flag (1=use, -1=not used)
-!    !else
-!    !   rdiagbuf(12,ii) = -1.                    
-!    !endif
-!    rdiagbuf(12,ii) = 1.                 ! analysis usage flag (1=use, -1=not used)
-!    rdiagbuf(13,ii) = 1.                 ! nonlinear qc relative weight
-!    rdiagbuf(14,ii) = 1./stdevorig(ii)   ! prepbufr inverse obs error (hPa**-1)
-!    rdiagbuf(15,ii) = 1./stdevorig(ii)   ! read_prepbufr inverse obs error (hPa**-1)
-!    rdiagbuf(16,ii) = 1./stdev(ii)       ! final inverse observation error (hPa**-1)
-!    rdiagbuf(17,ii) = ob(ii)  ! surface pressure observation (hPa)
-!    ! bias correction applied to Hx (guess in ob space).
-!    ! biasob is mean O-F over last 60 or so days.
-!    ! obs-ges used in analysis (coverted to hPa)
-!    rdiagbuf(18,ii) = ob(ii)-(anal_ob2(nanal,ii)+biasob(ii))
-!    ! obs-ges w/o bias correction.
-!    rdiagbuf(19,ii) = ob(ii)-anal_ob2(nanal,ii)
-!    if (anal_ob2(nanal,ii) .ne. anal_ob2(nanal,ii)) then
-!      print *,'NaN for nanal',nanal
-!      call mpi_cleanup()
-!    endif
-! enddo
-! write(iunito) idate
-! write(iunito)' ps',nchar,nreal,nobstot,nproc
-! write(iunito)cdiagbuf(1:nobstot),rdiagbuf(:,1:nobstot)
+ read(datestring,'(i10)') ianldate
+ if (nanal .eq. nanals+1) then
+    diag_file = "diag_conv_ps_ges."//datestring//"_ensmean.nc4"
+ else
+    diag_file = "diag_conv_ps_ges."//datestring//"_mem"//charnanal//".nc4"
+ end if
+
+ call nc_diag_init(diag_file, append=.false.)
+ do nob=1,nobstot
+ call nc_diag_header("date_time",ianldate )
+ call nc_diag_metadata("Station_ID",              statid(nob)            )
+ call nc_diag_metadata("Observation_Class",       "     ps"              )
+ call nc_diag_metadata("Observation_Type",        stattype(nob)          )
+ call nc_diag_metadata("Observation_Subtype",     0                      )
+ call nc_diag_metadata("Latitude",                rad2deg*oblocy(nob)    )
+ call nc_diag_metadata("Longitude",               rad2deg*oblocx(nob)    )
+ call nc_diag_metadata("Station_Elevation",       zob(nob)               )
+ call nc_diag_metadata("Pressure",                ob(nob)                )
+ call nc_diag_metadata("Height",                  anal_obz(nob)          )
+ call nc_diag_metadata("Time",                    obtime(nob)            )
+ call nc_diag_metadata("Analysis_Use_Flag",       iuseob(nob)            )
+ call nc_diag_metadata("Errinv_Input",            stdevorig(nob)         )
+ call nc_diag_metadata("Errinv_Adjust",           stdev(nob)             )
+ call nc_diag_metadata("Errinv_Final",            stdev(nob)             )
+ call nc_diag_metadata("Observation",                   ob(nob)          )
+ call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob2(nanal,nob)+biasob(nob))   )
+ call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob2(nanal,nob)   )
+ enddo
+ call nc_diag_write
+
  if (nanal .eq. nanals+1) then
     open(9,form='formatted',file='psobs_prior.txt')
     do nob=1,nobstot
        if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
        write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
                nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-               anal_ob2(nanal,nob),stdevorig(nob),stdev(nob),iuseob(nob)
+               anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
     enddo
     9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
-                  f7.1,1x,f5.2,1x,f5.2,1x,i1)
+                  f7.1,1x,f5.2,1x,f5.2,1x,i2)
     close(9)
  else
     filename = 'psobs_mem'//charnanal//'.txt'
@@ -407,7 +391,7 @@ program psop
        if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
        write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
                nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-               anal_ob2(nanal,nob),stdevorig(nob),stdev(nob),iuseob(nob)
+               anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
     enddo
     close(9)
  end if
