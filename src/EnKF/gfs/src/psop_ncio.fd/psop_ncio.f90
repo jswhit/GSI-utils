@@ -369,6 +369,14 @@ program psop
  call nc_diag_metadata("Observation",                   ob(nob)          )
  call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob2(nanal,nob)+biasob(nob))   )
  call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob2(nanal,nob)   )
+ ! for Jacobian, need index of ps in control vector
+ !st_ind = sum(levels(1:ns3d)) + ps_ind
+ !end_ind = sum(levels(1:ns3d)) + ps_ind
+ !call nc_diag_header("jac_nnz", 1)
+ !call nc_diag_header("jac_nind", 1)
+ !call nc_diag_data2d("Observation_Operator_Jacobian_stind", st_ind)
+ !call nc_diag_data2d("Observation_Operator_Jacobian_endind", st_ind)
+ !call nc_diag_data2d("Observation_Operator_Jacobian_val", 1.)
  enddo
  call nc_diag_write
 
@@ -383,17 +391,17 @@ program psop
     9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
                   f7.1,1x,f5.2,1x,f5.2,1x,i2)
     close(9)
- else
-    filename = 'psobs_mem'//charnanal//'.txt'
-    print *,'write out ',trim(filename)
-    open(9,form='formatted',file=filename)
-    do nob=1,nobstot
-       if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
-       write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
-               nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-               anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
-    enddo
-    close(9)
+ !else
+ !   filename = 'psobs_mem'//charnanal//'.txt'
+ !   print *,'write out ',trim(filename)
+ !   open(9,form='formatted',file=filename)
+ !   do nob=1,nobstot
+ !      if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
+ !      write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
+ !              nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
+ !              anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
+ !   enddo
+ !   close(9)
  end if
  close(iunito)
 
