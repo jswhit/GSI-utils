@@ -15,7 +15,7 @@ program psop
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
          nproc,numproc,nob,nanal,j,iunit,iunitsig,fhmin,fhmax,fhout,ntimes,&
-         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,iunito,idate
+         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml
  integer mpi_status(mpi_status_size),ianldate
  real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
       delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
@@ -55,9 +55,7 @@ program psop
 
  nchar=1; nreal=19
  iunit = 7
- iunitsig = 22
  iunit_nml = 912
- iunito = 9
  rlapse = 0.0065
 
  ! read namelist from file on all processors.
@@ -82,8 +80,6 @@ program psop
  ntimes = 1+((fhmax-fhmin)/fhout)
 
  nanal = nproc + 1
-
- read(datestring,'(i10)') idate
 
 !==> read in obs data (on root process).
  
@@ -369,14 +365,6 @@ program psop
  call nc_diag_metadata("Observation",                   ob(nob)          )
  call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob2(nanal,nob)+biasob(nob))   )
  call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob2(nanal,nob)   )
- ! for Jacobian, need index of ps in control vector
- !st_ind = sum(levels(1:ns3d)) + ps_ind
- !end_ind = sum(levels(1:ns3d)) + ps_ind
- !call nc_diag_header("jac_nnz", 1)
- !call nc_diag_header("jac_nind", 1)
- !call nc_diag_data2d("Observation_Operator_Jacobian_stind", st_ind)
- !call nc_diag_data2d("Observation_Operator_Jacobian_endind", st_ind)
- !call nc_diag_data2d("Observation_Operator_Jacobian_val", 1.)
  enddo
  call nc_diag_write
 
@@ -403,7 +391,6 @@ program psop
  !   enddo
  !   close(9)
  end if
- close(iunito)
 
  call MPI_Barrier(MPI_COMM_WORLD,ierr)
  call MPI_Finalize(ierr)

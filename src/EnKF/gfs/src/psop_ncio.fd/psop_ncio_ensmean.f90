@@ -13,8 +13,8 @@ program psop
  character(len=120) filenamein,obsfile,filename,diag_file
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
-         st_ind,nob,nanal,j,iunit,iunitsig,fhmin,fhmax,fhout,ntimes,&
-         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,iunito,idate
+         st_ind,nob,nanal,j,iunit,fhmin,fhmax,fhout,ntimes,&
+         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml
  real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
       delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
  real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg
@@ -46,7 +46,6 @@ program psop
 
  nchar=1; nreal=19
  iunit = 7
- iunitsig = 22
  iunit_nml = 912
  rlapse = 0.0065
 
@@ -61,8 +60,6 @@ program psop
  close(iunit_nml)
 
  ntimes = 1+((fhmax-fhmin)/fhout)
-
- read(datestring,'(i10)') idate
 
 !==> read in obs data (on root process).
  
