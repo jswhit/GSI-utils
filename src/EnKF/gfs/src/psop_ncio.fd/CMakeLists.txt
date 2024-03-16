@@ -13,7 +13,7 @@ if(OpenMP_Fortran_FOUND)
   target_link_libraries(psop_ncio.x PRIVATE OpenMP::OpenMP_Fortran)
 endif()
 
-add_executable(psop_ncio_ensmean.x psop_ncio.f90)
+add_executable(psop_ncio_ensmean.x psop_ncio_ensmean.f90)
 target_link_libraries(psop_ncio_ensmean.x PRIVATE NetCDF::NetCDF_Fortran)
 target_link_libraries(psop_ncio_ensmean.x PRIVATE ncio::ncio)
 target_link_libraries(psop_ncio_ensmean.x PRIVATE ncdiag::ncdiag)

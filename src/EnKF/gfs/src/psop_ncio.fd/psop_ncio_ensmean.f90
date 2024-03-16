@@ -12,14 +12,13 @@ program psop
  type(Dimension) :: londim,latdim,levdim
  character(len=120) filenamein,obsfile,filename,diag_file
  character(len=10) datestring
- integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
-         st_ind,nob,nanal,j,iunit,fhmin,fhmax,fhout,ntimes,&
-         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml
+ integer iret,ps_ind,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nfhr,nobstot,&
+         st_ind(1),end_ind(1),nob,j,iunit,fhmin,fhmax,fhout,ntimes,&
+         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ianldate
  real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
-      delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
+      val(1),delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
  real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg
  character(len=2) charfhr
- character(len=3) charnanal
  character(len=19) sid
  real, dimension(:), allocatable :: glats, glatspluspoles, ak, bk
  real, dimension(:), allocatable :: oblocx,oblocy,ob,zob,obtime,stdev,&
@@ -30,7 +29,7 @@ program psop
  integer, allocatable, dimension(:) :: stattype,iuseob
  character(len=8), allocatable :: statid(:)
  namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,&
-                    nanals,obsfile,zthresh,errfact,delz_const,st_ind
+                    obsfile,zthresh,errfact,delz_const,ps_ind
 
  pi      = 4.*atan(1.0)
  rad2deg = 180./pi
@@ -50,7 +49,7 @@ program psop
  rlapse = 0.0065
 
  ! read namelist from file on all processors.
- st_ind=1
+ ps_ind=1
  zthresh = 9.9e31
  delz_const = 0.001 ! factor for adjusting ob error based on diff between station and model height
  nlevt = 2 ! use temp at level just above 1st level for pressure reduction.
@@ -249,7 +248,7 @@ program psop
        end if
     end if   
  enddo
- if (nn .ne. 0) print * nn,' failed gross qc check'
+ if (nn .ne. 0) print *,nn,' failed gross qc check'
 
  read(datestring,'(i10)') ianldate
  diag_file = "diag_conv_ps_ges."//datestring//"_ensmean.nc4"
@@ -272,14 +271,15 @@ program psop
  call nc_diag_metadata("Errinv_Adjust",           stdev(nob)             )
  call nc_diag_metadata("Errinv_Final",            stdev(nob)             )
  call nc_diag_metadata("Observation",                   ob(nob)          )
- call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob(nanal,nob)+biasob(nob))   )
- call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob(nanal,nob)   )
+ call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob(nob)+biasob(nob))   )
+ call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob(nob)   )
  ! for Jacobian, need index of ps in control vector
  call nc_diag_header("jac_nnz", 1)
  call nc_diag_header("jac_nind", 1)
+ st_ind(1)=ps_ind; end_ind(1)=ps_ind; val(1)=1.
  call nc_diag_data2d("Observation_Operator_Jacobian_stind", st_ind)
- call nc_diag_data2d("Observation_Operator_Jacobian_endind", st_ind)
- call nc_diag_data2d("Observation_Operator_Jacobian_val", 1.)
+ call nc_diag_data2d("Observation_Operator_Jacobian_endind", end_ind)
+ call nc_diag_data2d("Observation_Operator_Jacobian_val", val)
  enddo
  call nc_diag_write
 
@@ -288,7 +288,7 @@ program psop
     if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
     write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
             nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-            anal_ob(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
+            anal_ob(nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
  enddo
  9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
                f7.1,1x,f5.2,1x,f5.2,1x,i2)
