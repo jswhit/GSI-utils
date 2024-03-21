@@ -10,14 +10,14 @@ program psop
  implicit none
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
- character(len=120) filenamein,obsfile,filename,diag_file
+ character(len=120) filenamein,obsfile,filename,diag_file,datapath
  character(len=10) datestring
- integer iret,ps_ind,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nfhr,nobstot,&
+ integer iret,ps_ind,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nfhr,nobstot,ncount,&
          st_ind(1),end_ind(1),nob,j,iunit,fhmin,fhmax,fhout,ntimes,&
          nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ianldate
- real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
+ real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,grosserrfact,&
       val(1),delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
- real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg
+ real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg,rmsinnov,meanbias
  character(len=2) charfhr
  character(len=19) sid
  real, dimension(:), allocatable :: glats, glatspluspoles, ak, bk
@@ -29,7 +29,7 @@ program psop
  integer, allocatable, dimension(:) :: stattype,iuseob
  character(len=8), allocatable :: statid(:)
  namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,&
-                    obsfile,zthresh,errfact,delz_const,ps_ind
+                    obsfile,datapath,zthresh,errfact,delz_const,ps_ind,grosserrfact
 
  pi      = 4.*atan(1.0)
  rad2deg = 180./pi
@@ -47,6 +47,7 @@ program psop
  iunit = 7
  iunit_nml = 912
  rlapse = 0.0065
+ datapath = "./"
 
  ! read namelist from file on all processors.
  ps_ind=1
@@ -54,9 +55,11 @@ program psop
  delz_const = 0.001 ! factor for adjusting ob error based on diff between station and model height
  nlevt = 2 ! use temp at level just above 1st level for pressure reduction.
  errfact = 1.0
+ grosserrfact = 6.
  open(iunit_nml,file='psop.nml',form='formatted')
  read(iunit_nml,nam_psop)
  close(iunit_nml)
+ write(6,nml=nam_psop)
 
  ntimes = 1+((fhmax-fhmin)/fhout)
 
@@ -116,12 +119,9 @@ program psop
  ntime = ntime + 1
 
  write(charfhr,'(i2.2)') nfhr
- filenamein = "sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
+ filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
 
  dset = open_dataset(trim(filenamein),errcode=iret)
- londim = get_dim(dset,'grid_xt'); nlons = londim%len
- latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
- levdim = get_dim(dset,'pfull');   nlevs = levdim%len
  !print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
 
  if (iret .ne. 0) then
@@ -130,6 +130,9 @@ program psop
  end if
 
  if (nfhr .eq. fhmin) then
+    londim = get_dim(dset,'grid_xt'); nlons = londim%len
+    latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
+    levdim = get_dim(dset,'pfull');   nlevs = levdim%len
     allocate(psg(nlons,nlats))
     allocate(zsg(nlons,nlats))
     allocate(tempg(nlons,nlats,nlevs))
@@ -145,17 +148,16 @@ program psop
     allocate(analtemp(nlons+1,nlats+2,ntimes))
     allocate(analpress(nlons+1,nlats+2,ntimes))
     allocate(analzs(nlons+1,nlats+2))
+    call read_vardata(dset,'hgtsfc',zsg)
+    call read_vardata(dset, 'grid_yt', glats)
+    call read_attribute(dset, 'ak', ak)
+    call read_attribute(dset, 'bk', bk)
  end if
 
  call read_vardata(dset,'tmp',tempg)
  call read_vardata(dset,'spfh',qg)
  tvg = tempg(:,:,nlevs:1:-1) * ( 1.0 + fv*qg(:,:,nlevs:1:-1) ) ! convert T to Tv, flip vertical
  call read_vardata(dset,'pressfc',psg)
- call read_vardata(dset,'hgtsfc',zsg)
- !call read_vardata(dset, 'grid_xt', glons)
- call read_vardata(dset, 'grid_yt', glats)
- call read_attribute(dset, 'ak', ak)
- call read_attribute(dset, 'bk', bk)
  call close_dataset(dset)
  do k=1,nlevs+1
     psig(:,:,k) = ak(k)+bk(k)*psg
@@ -223,26 +225,48 @@ program psop
     ! this is ob prior.
     call lintrp3(analps,anal_ob(nob),&
                  dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !call lintrp3(analz(:,:,:,1),anal_obgph,&
+    !            dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !if (anal_obgph >= zob(nob)) then ! station height below 1st model level
     ! adjust Hx to (perturbed) station height
     anal_ob(nob) = &
     preduce(anal_ob(nob),anal_obp,anal_obt,zob(nob),anal_obz(nob),rlapse,grav,rd)
+    !print *,'nob,zob,anal_obz,anal_obp,anal_obt,ob,anal_ob = ',nob,zob(nob),anal_obz(nob),anal_obp,anal_obt,ob(nob),anal_ob(nob)
+    !else
+    !  ! station height above 1st model level
+    !  do k=2,nlevs
+    !     ! find 1st model level above station height
+    !     ! linearly interpolate log of pressure to station height
+    !     call lintrp3(analz3(:,:,:,k),anal_obgph,&
+    !                  dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !     if (anal_obgph >= zob(nob)) then
+    !        call lintrp3(analpress(:,:,:,k),anal_obp,&
+    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !        call lintrp3(analpress(:,:,:,k-1),anal_obpm1,&
+    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !        call lintrp3(analz(:,:,:,k-1),anal_obgphm1,&
+    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+    !        ! linearly interpolate log(p) in height to ob elevation.
+    !        wt = (anal_obgph-zob(nob))/(anal_obgph-anal_obgphm1)
+    !        anal_ob(nob) = exp((1.-wt)*log(anal_obp) + wt*log(anal_obpm1))
+    !    endif
+    !  enddo
+    !endif
 
     zdiff = zob(nob)-anal_obz(nob)
     ! adjust ob error based on diff between station and model height.
     ! (GSI uses 0.005 for delz_const?)
     stdev(nob) = stdev(nob) + delz_const*abs(zdiff)
-    if ((obtime(nob) .ge. -3. .and. &
-        obtime(nob) .le. 3.) .and. abs(zdiff) .lt. zthresh) then
+    iuseob(nob) = -1
+    if (obtime(nob) .ge. -3. .and. obtime(nob) .le. 3) then 
         iuseob(nob) = 1
-    else
-        iuseob(nob) = 0
-        nn = nn + 1
     end if
 ! gross error check.
     if (iuseob(nob) .eq. 1) then
        altob = palt(ob(nob),zob(nob),grav,rd)
-       if (altob .lt. 850. .or. altob .gt. 1090.) then
-          print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),zob(nob),anal_obz(nob),altob
+       if (altob .lt. 850. .or. altob .gt. 1090. .or. abs(ob(nob)-anal_ob(nob)-biasob(nob)) .gt. grosserrfact*stdev(nob) .or.&
+          abs(zdiff) .gt. zthresh) then
+          print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),anal_ob(nob),zob(nob),anal_obz(nob),altob
           iuseob(nob)=-1
           nn = nn + 1
        end if
@@ -266,7 +290,7 @@ program psop
  call nc_diag_metadata("Pressure",                ob(nob)                )
  call nc_diag_metadata("Height",                  anal_obz(nob)          )
  call nc_diag_metadata("Time",                    obtime(nob)            )
- call nc_diag_metadata("Analysis_Use_Flag",       iuseob(nob)            )
+ call nc_diag_metadata("Analysis_Use_Flag",       sngl(iuseob(nob))      )
  call nc_diag_metadata("Errinv_Input",            stdevorig(nob)         )
  call nc_diag_metadata("Errinv_Adjust",           stdev(nob)             )
  call nc_diag_metadata("Errinv_Final",            stdev(nob)             )
@@ -284,12 +308,25 @@ program psop
  call nc_diag_write
 
  open(9,form='formatted',file='psobs_prior.txt')
+ rmsinnov = 0.
+ meanbias = 0.
+ ncount = 0
  do nob=1,nobstot
-    if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
+    if (stdevorig(nob) .gt. 99.99) stdevorig(nob) = 99.99
+    if (stdev(nob) .gt. 99.99) then
+       stdev(nob) = 99.99
+       iuseob(nob) = -1
+    endif
+    if (iuseob(nob) .eq. 1) then
+       rmsinnov = rmsinnov + (ob(nob)-(anal_ob(nob)+biasob(nob)))**2
+       meanbias = meanbias + ob(nob)-(anal_ob(nob)+biasob(nob))
+       ncount = ncount + 1
+    endif
     write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
             nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
             anal_ob(nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
  enddo
+ print *,'ncount, rms O-F, mean O-F = ',ncount,sqrt(rmsinnov/ncount),meanbias/ncount
  9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
                f7.1,1x,f5.2,1x,f5.2,1x,i2)
  close(9)
@@ -325,6 +362,22 @@ real function preduce(ps,tpress,t,zmodel,zob,rlapse,grav,rd)
    t0 = t*(ps/tpress)**alpha ! eqn 4 from B&M
    preduce = ps*((t0 + rlapse*(zob-zmodel))/t0)**(1./alpha) ! eqn 1 from B&M
 end function preduce
+
+!real function preduce(ps,p1,t1,zob,zmodel,grav,rd)
+!! ECMWF method
+!   implicit none
+!   real, intent(in) :: rd,grav
+!   real, intent(in) :: p1,t1,zmodel,zob,ps
+!   real t0,alpha,rlap,tx,ty
+!   rlap = 0.0065
+!   ! t0 is eqn 5.21,5.22 from IFS docs, chap 5 (http://www.ecmwf.int/research/ifsdocs/CY33r1/ASSIMILATION/IFSPart2.pdf)
+!   alpha = rd*rlap/grav
+!   tx = 290.5; ty = 255.
+!   t0 = t1 + alpha*t1*log(ps/p1)
+!   t0 = 0.5*(t0 + max(ty,min(tx,t0))) ! estimated surface temp as model ps (z=zmodel)
+!   ! from Benjamin and Miller (http://dx.doi.org/10.1175/1520-0493(1990)118<2099:AASLPR>2.0.CO;2) eqn 1
+!   preduce = ps*((t0 + rlap*(zmodel-zob))/t0)**(1./alpha)
+!end function preduce
 
 real function palt(ps,zs,grav,rd)
 ! compute QNH altimeter setting (in mb) given ps (in mb), zs (in m).

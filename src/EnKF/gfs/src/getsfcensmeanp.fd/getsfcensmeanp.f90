@@ -339,7 +339,7 @@ program getsfcensmeanp
            else
               write(6,*)'***ERROR*** invalid ndims= ',dset%variables(nvar)%ndims,&
                    ' for variable ',trim(dset%variables(nvar)%name)
-              call MPI_Abort(MPI_COMM_WORLD,98,iret)
+              !call MPI_Abort(MPI_COMM_WORLD,98,iret)
            endif
         enddo
         if (mype == 0) call close_dataset(dseto)

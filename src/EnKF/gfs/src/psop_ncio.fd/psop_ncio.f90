@@ -11,15 +11,15 @@ program psop
  include  'mpif.h'
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
- character(len=120) filenamein,obsfile,filename,diag_file
+ character(len=120) filenamein,obsfile,filename,diag_file,datapath
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
          nproc,numproc,nob,nanal,j,iunit,iunitsig,fhmin,fhmax,fhout,ntimes,&
-         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml
+         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ncount
  integer mpi_status(mpi_status_size),ianldate
- real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,&
+ real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,rmsinnov,meanbias,&
       delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
- real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg
+ real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg,grosserrfact
  character(len=2) charfhr
  character(len=3) charnanal
  character(len=19) sid
@@ -31,8 +31,8 @@ program psop
        analpress,analtemp,analps,zg
  integer, allocatable, dimension(:) :: stattype,iuseob
  character(len=8), allocatable :: statid(:)
- namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,&
-                    nanals,obsfile,zthresh,errfact,delz_const
+ namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,nanals,&
+                    obsfile,datapath,zthresh,errfact,delz_const,grosserrfact
 
 ! Initialize mpi
  call MPI_Init(ierr)
@@ -57,25 +57,33 @@ program psop
  iunit = 7
  iunit_nml = 912
  rlapse = 0.0065
+ datapath = "./"
 
  ! read namelist from file on all processors.
  zthresh = 9.9e31
  delz_const = 0.001 ! factor for adjusting ob error based on diff between station and model height
  nlevt = 2 ! use temp at level just above 1st level for pressure reduction.
  errfact = 1.0
+ grosserrfact = 6.
+ nanals = numproc-1
  open(iunit_nml,file='psop.nml',form='formatted')
  read(iunit_nml,nam_psop)
  close(iunit_nml)
- if (nproc .eq. 0) write(6,nam_psop)
+ if (nproc .eq. 0) then
+    print *, "running on ",numproc," processors..."
+    print *, "nanals = ",nanals
+    write(6,nam_psop)
+ endif
 
 
- if (numproc .lt. nanals) then
-    print *,numproc,nanals
+ if (numproc .lt. nanals+1) then
+    print *,numproc,nanals+1
     print *,'warning, numproc too small!'
     call MPI_Barrier(MPI_COMM_WORLD,ierr)
     call MPI_Finalize(ierr)
     stop
  end if
+ if (nproc .gt. nanals) go to 999
 
  ntimes = 1+((fhmax-fhmin)/fhout)
 
@@ -169,16 +177,13 @@ program psop
  write(charfhr,'(i2.2)') nfhr
  write(charnanal,'(i3.3)') nanal
  if (nanal .eq. nanals+1) then
-    filenamein = "sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
+    filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
  else
-    filenamein = "sfg_"//datestring//"_fhr"//charfhr//"_mem"//charnanal
+    filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_mem"//charnanal
  end if
 
 
  dset = open_dataset(trim(filenamein),errcode=iret)
- londim = get_dim(dset,'grid_xt'); nlons = londim%len
- latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
- levdim = get_dim(dset,'pfull');   nlevs = levdim%len
  !print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
 
  if (iret .ne. 0) then
@@ -187,6 +192,9 @@ program psop
  end if
 
  if (nfhr .eq. fhmin) then
+    londim = get_dim(dset,'grid_xt'); nlons = londim%len
+    latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
+    levdim = get_dim(dset,'pfull');   nlevs = levdim%len
     allocate(psg(nlons,nlats))
     allocate(zsg(nlons,nlats))
     allocate(tempg(nlons,nlats,nlevs))
@@ -202,17 +210,16 @@ program psop
     allocate(analtemp(nlons+1,nlats+2,ntimes))
     allocate(analpress(nlons+1,nlats+2,ntimes))
     allocate(analzs(nlons+1,nlats+2))
+    call read_vardata(dset,'hgtsfc',zsg)
+    call read_vardata(dset, 'grid_yt', glats)
+    call read_attribute(dset, 'ak', ak)
+    call read_attribute(dset, 'bk', bk)
  end if
 
  call read_vardata(dset,'tmp',tempg)
  call read_vardata(dset,'spfh',qg)
  tvg = tempg(:,:,nlevs:1:-1) * ( 1.0 + fv*qg(:,:,nlevs:1:-1) ) ! convert T to Tv, flip vertical
  call read_vardata(dset,'pressfc',psg)
- call read_vardata(dset,'hgtsfc',zsg)
- !call read_vardata(dset, 'grid_xt', glons)
- call read_vardata(dset, 'grid_yt', glats)
- call read_attribute(dset, 'ak', ak)
- call read_attribute(dset, 'bk', bk)
  call close_dataset(dset)
  do k=1,nlevs+1
     psig(:,:,k) = ak(k)+bk(k)*psg
@@ -290,26 +297,28 @@ program psop
     ! adjust ob error based on diff between station and model height.
     ! (GSI uses 0.005 for delz_const?)
     stdev(nob) = stdev(nob) + delz_const*abs(zdiff)
-    if ((obtime(nob) .ge. -3. .and. &
-        obtime(nob) .le. 3.) .and. abs(zdiff) .lt. zthresh) then
+    iuseob(nob) = -1
+    if (obtime(nob) .ge. -3. .and. obtime(nob) .le. 3) then 
         iuseob(nob) = 1
-    else
-        iuseob(nob) = 0
-        nn = nn + 1
     end if
 ! gross error check.
+    if (nproc .eq. nanals) then ! QC using ens mean
     if (iuseob(nob) .eq. 1) then
        altob = palt(ob(nob),zob(nob),grav,rd)
-       if (altob .lt. 850. .or. altob .gt. 1090.) then
-          if (nproc .eq. numproc) print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),zob(nob),anal_obz(nob),altob
+       if (altob .lt. 850. .or. altob .gt. 1090. .or.&
+           abs(ob(nob)-anal_ob(nob)-biasob(nob)) .gt. grosserrfact*stdev(nob) .or.&
+           abs(zdiff) .gt. zthresh) then
+          print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),anal_ob(nob),zob(nob),anal_obz(nob),altob
           iuseob(nob)=-1
           nn = nn + 1
        end if
     end if   
+    end if
  enddo
- if (nn .ne. 0) print *,nanal,nn,' failed gross qc check'
 
-! distribute the ob error to all processors.
+ if (nn .ne. 0 .and. nproc .eq. nanals+1) print *,nn,' failed gross qc check'
+
+! distribute the recentered ob priors
 ! first, gather back on last proc.
  if (nproc .eq. nanals) then
     do np=0,nanals-1
@@ -319,12 +328,12 @@ program psop
     do nob=1,nobstot
        ! replace hx computed from ens mean with ens mean hx.
        ensmean_ob = sum(anal_ob2(1:nanals,nob))/float(nanals)
-       anal_ob2(nanals+1,nob) = ensmean_ob
+       !anal_ob2(nanals+1,nob) = ensmean_ob
        ! recenter hx ensemble about hx computed from ensemble mean.
-       !do nanal=1,nanals
-       !   anal_ob2(nanal,nob) = anal_ob2(nanal,nob) - ensmean_ob + anal_ob(nob)
-       !enddo
-       !anal_ob2(nanals+1,nob) = anal_ob(nob)
+       do nanal=1,nanals
+          anal_ob2(nanal,nob) = anal_ob2(nanal,nob) - ensmean_ob + anal_ob(nob)
+       enddo
+       anal_ob2(nanals+1,nob) = anal_ob(nob)
     enddo
  else
     !print *,'nproc',nproc,'min/max anal_ob',minval(anal_ob),maxval(anal_ob)
@@ -335,8 +344,8 @@ program psop
 ! now push back out to all other procs.
  call MPI_Bcast(anal_ob2,nobstot*(nanals+1),MPI_REAL,nanals, &
                MPI_COMM_WORLD,MPI_Status,ierr)
-
- call MPI_Barrier(MPI_COMM_WORLD,ierr)
+ call MPI_Bcast(iuseob,nobstot,MPI_INTEGER,nanals, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
 
  read(datestring,'(i10)') ianldate
  if (nanal .eq. nanals+1) then
@@ -358,7 +367,7 @@ program psop
  call nc_diag_metadata("Pressure",                ob(nob)                )
  call nc_diag_metadata("Height",                  anal_obz(nob)          )
  call nc_diag_metadata("Time",                    obtime(nob)            )
- call nc_diag_metadata("Analysis_Use_Flag",       iuseob(nob)            )
+ call nc_diag_metadata("Analysis_Use_Flag",       sngl(iuseob(nob))      )
  call nc_diag_metadata("Errinv_Input",            stdevorig(nob)         )
  call nc_diag_metadata("Errinv_Adjust",           stdev(nob)             )
  call nc_diag_metadata("Errinv_Final",            stdev(nob)             )
@@ -370,12 +379,25 @@ program psop
 
  if (nanal .eq. nanals+1) then
     open(9,form='formatted',file='psobs_prior.txt')
+    rmsinnov = 0.
+    meanbias = 0.
+    ncount = 0
     do nob=1,nobstot
-       if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
+       if (stdevorig(nob) .gt. 99.99) stdevorig(nob) = 99.99
+       if (stdev(nob) .gt. 99.99) then
+          stdev(nob) = 99.99
+          iuseob(nob) = -1
+       endif
+       if (iuseob(nob) .eq. 1) then
+          rmsinnov = rmsinnov + (ob(nob)-(anal_ob(nob)+biasob(nob)))**2
+          meanbias = meanbias + ob(nob)-(anal_ob(nob)+biasob(nob))
+          ncount = ncount + 1
+       endif
        write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
                nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-               anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
+               anal_ob(nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
     enddo
+    print *,'ncount, rms O-F, mean O-F = ',ncount,sqrt(rmsinnov/ncount),meanbias/ncount
     9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
                   f7.1,1x,f5.2,1x,f5.2,1x,i2)
     close(9)
@@ -392,6 +414,7 @@ program psop
  !   close(9)
  end if
 
+999 continue
  call MPI_Barrier(MPI_COMM_WORLD,ierr)
  call MPI_Finalize(ierr)
 
