@@ -8,28 +8,38 @@ program psop
  use nc_diag_write_mod, only: nc_diag_init, nc_diag_header, nc_diag_metadata, &
                               nc_diag_write, nc_diag_data2d
  implicit none
+ include  'mpif.h'
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
  character(len=120) filenamein,obsfile,filename,diag_file,datapath
  character(len=10) datestring
- integer iret,ps_ind,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nfhr,nobstot,ncount,&
-         st_ind(1),end_ind(1),nob,j,iunit,fhmin,fhmax,fhout,ntimes,&
-         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ianldate
- real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,grosserrfact,&
-      val(1),delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
- real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg,rmsinnov,meanbias
+ integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
+         nproc,numproc,nob,nanal,j,iunit,iunitsig,fhmin,fhmax,fhout,ntimes,&
+         nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ncount
+ integer mpi_status(mpi_status_size),ianldate
+ real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,rmsinnov,meanbias,&
+      delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
+ real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg,grosserrfact
  character(len=2) charfhr
+ character(len=3) charnanal
  character(len=19) sid
- real, dimension(:), allocatable :: glats, glatspluspoles, ak, bk
+ real, dimension(:), allocatable :: glats, glatspluspoles, pfull
  real, dimension(:), allocatable :: oblocx,oblocy,ob,zob,obtime,stdev,&
                                     anal_obz,stdevorig,anal_ob,biasob
- real, dimension(:,:), allocatable :: psg,zsg,analzs
+ real, dimension(:,:), allocatable :: psg,zsg,analzs,anal_ob2
  real, dimension(:,:,:), allocatable :: tempg,tvg,qg,psig,pslg,&
        analpress,analtemp,analps,zg
  integer, allocatable, dimension(:) :: stattype,iuseob
  character(len=8), allocatable :: statid(:)
- namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,&
-                    obsfile,datapath,zthresh,errfact,delz_const,ps_ind,grosserrfact
+ namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,nanals,&
+                    obsfile,datapath,zthresh,errfact,delz_const,grosserrfact
+
+! Initialize mpi
+ call MPI_Init(ierr)
+
+! nproc is process number, numproc is total number of processes.
+ call MPI_Comm_rank(MPI_COMM_WORLD,nproc,ierr)
+ call MPI_Comm_size(MPI_COMM_WORLD,numproc,ierr)
 
  pi      = 4.*atan(1.0)
  rad2deg = 180./pi
@@ -50,20 +60,38 @@ program psop
  datapath = "./"
 
  ! read namelist from file on all processors.
- ps_ind=1
  zthresh = 9.9e31
  delz_const = 0.001 ! factor for adjusting ob error based on diff between station and model height
  nlevt = 2 ! use temp at level just above 1st level for pressure reduction.
  errfact = 1.0
  grosserrfact = 6.
+ nanals = numproc-1
  open(iunit_nml,file='psop.nml',form='formatted')
  read(iunit_nml,nam_psop)
  close(iunit_nml)
- write(6,nml=nam_psop)
+ if (nproc .eq. 0) then
+    print *, "running on ",numproc," processors..."
+    print *, "nanals = ",nanals
+    write(6,nam_psop)
+ endif
+
+
+ if (numproc .lt. nanals+1) then
+    print *,numproc,nanals+1
+    print *,'warning, numproc too small!'
+    call MPI_Barrier(MPI_COMM_WORLD,ierr)
+    call MPI_Finalize(ierr)
+    stop
+ end if
+ if (nproc .gt. nanals) go to 999
 
  ntimes = 1+((fhmax-fhmin)/fhout)
 
+ nanal = nproc + 1
+
 !==> read in obs data (on root process).
+ 
+ if (nproc .eq. 0) then
  
  print *,trim(adjustl(obsfile))
  open(149,form="formatted",file=trim(adjustl(obsfile)))
@@ -74,11 +102,16 @@ program psop
  enddo
  199 continue
 
+ end if
+ 
+ call MPI_Bcast(nobstot,1,MPI_INTEGER,0,MPI_COMM_WORLD,MPI_Status,ierr)
+
 !==> allocate some arrays for obs and obs metadata.
   
  allocate(statid(nobstot))
  allocate(anal_ob(nobstot))
  allocate(biasob(nobstot))
+ allocate(anal_ob2(nanals+1,nobstot))
  allocate(anal_obz(nobstot))
  allocate(stattype(nobstot))
  allocate(iuseob(nobstot))
@@ -89,6 +122,8 @@ program psop
  allocate(obtime(nobstot))
  allocate(stdev(nobstot))
  allocate(stdevorig(nobstot))
+ 
+ if (nproc .eq. 0) then
  
  rewind(149)
  nobsh = 0
@@ -108,6 +143,27 @@ program psop
  print *, nobstot,' total obs'
  print *, nobsh,' total obs in SH'
  close(149)
+
+ end if
+ 
+ call MPI_Bcast(oblocx,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(oblocy,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(obtime,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(ob,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(zob,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(stdevorig,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(stdev,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(stattype,nobstot,MPI_INTEGER,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(biasob,nobstot,MPI_REAL,0, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
  
 !==> convert ob location to radians.
   
@@ -119,10 +175,15 @@ program psop
  ntime = ntime + 1
 
  write(charfhr,'(i2.2)') nfhr
- filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
+ write(charnanal,'(i3.3)') nanal
+ if (nanal .eq. nanals+1) then
+    filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_ensmean"
+ else
+    filenamein = trim(datapath)//"sfg_"//datestring//"_fhr"//charfhr//"_mem"//charnanal
+ end if
+
 
  dset = open_dataset(trim(filenamein),errcode=iret)
- !print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
 
  if (iret .ne. 0) then
     print *,'error reading file ',iret,trim(filenamein)
@@ -133,6 +194,7 @@ program psop
     londim = get_dim(dset,'grid_xt'); nlons = londim%len
     latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
     levdim = get_dim(dset,'pfull');   nlevs = levdim%len
+    print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
     allocate(psg(nlons,nlats))
     allocate(zsg(nlons,nlats))
     allocate(tempg(nlons,nlats,nlevs))
@@ -142,35 +204,36 @@ program psop
     allocate(pslg(nlons,nlats,nlevs))
     allocate(psig(nlons,nlats,nlevs+1))
     allocate(glats(nlats))
-    allocate(glatspluspoles(nlats+2))
-    allocate(ak(nlevs+1),bk(nlevs+1))
-    allocate(analps(nlons+1,nlats+2,ntimes))
-    allocate(analtemp(nlons+1,nlats+2,ntimes))
-    allocate(analpress(nlons+1,nlats+2,ntimes))
-    allocate(analzs(nlons+1,nlats+2))
+    allocate(glatspluspoles(nlats))
+    allocate(pfull(nlevs))
+    allocate(analps(nlons+1,nlats,ntimes))
+    allocate(analtemp(nlons+1,nlats,ntimes))
+    allocate(analpress(nlons+1,nlats,ntimes))
+    allocate(analzs(nlons+1,nlats))
     call read_vardata(dset,'hgtsfc',zsg)
     call read_vardata(dset, 'grid_yt', glats)
-    call read_attribute(dset, 'ak', ak)
-    call read_attribute(dset, 'bk', bk)
+    call read_vardata(dset, 'pfull', pfull)
+    print *,'pfull',pfull,pfull(nlevt)
  end if
 
  call read_vardata(dset,'tmp',tempg)
+ if (nfhr .eq. fhmax) print *,'min/max temp', minval(tempg),maxval(tempg)
  call read_vardata(dset,'spfh',qg)
- tvg = tempg(:,:,nlevs:1:-1) * ( 1.0 + fv*qg(:,:,nlevs:1:-1) ) ! convert T to Tv, flip vertical
- call read_vardata(dset,'pressfc',psg)
+ if (nfhr .eq. fhmax) print *,'min/max spfh', minval(qg),maxval(qg)
+ tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv, flip vertical
+ if (nfhr .eq. fhmax) print *,'min/max tv', minval(tvg),maxval(tvg)
+ call read_vardata(dset,'mslp',psg)
  call close_dataset(dset)
- do k=1,nlevs+1
-    psig(:,:,k) = ak(k)+bk(k)*psg
- enddo
  do k=1,nlevs
    ! layer pressure from Phillips vertical interpolation.
-   pslg(:,:,nlevs-k+1) = ((psig(:,:,k)**kap1-psig(:,:,k+1)**kap1)/&
-                 (kap1*(psig(:,:,k)-psig(:,:,k+1))))**kapr
+   pslg(:,:,k) = pfull(k)
  enddo
  psg = psg/100. ! convert to mb (units of obs)
- pslg = pslg/100.
- psig = psig/100.
- !if nfhr .eq. fhmin) then
+ if (nfhr .eq. fhmax) then
+ print *,'min/max mslp',minval(psg),maxval(psg)
+ print *,'min/max zsg',minval(zsg),maxval(zsg)
+ endif
+ !if (nproc .eq. 0 .and. nfhr .eq. fhmin) then
  !   print *,'psg min/max ',minval(psg),maxval(psg)
  !   do k=1,nlevs
  !      print *,k,minval(psig(:,:,k)),maxval(psig(:,:,k)),minval(pslg(:,:,k)),maxval(pslg(:,:,k)),minval(tvg(:,:,k)),maxval(tvg(:,:,k))
@@ -182,15 +245,20 @@ program psop
  call addpolewrap(zsg,analzs,nlons,nlats)
  call addpolewrap(tvg(:,:,nlevt),analtemp(:,:,ntime),nlons,nlats)
  call addpolewrap(pslg(:,:,nlevt),analpress(:,:,ntime),nlons,nlats)
+ if (nfhr .eq. fhmax) then
+ print *,'min/max analtemp ',minval(analtemp),maxval(analtemp)
+ print *,'min/max analpress ',minval(analpress),maxval(analpress)
+ endif
 
  enddo ! nfhr
 
  !==> 0.5*pi-latitudes with poles included (used in bilinear interp routine).
  glats = deg2rad*glats
- glatspluspoles(1) = 0.
- glatspluspoles(nlats+2) = pi
- do j=2,nlats+1
-   glatspluspoles(j) = 0.5*pi - glats(j-1)
+ !glatspluspoles(1) = 0.
+ !glatspluspoles(nlats+2) = pi
+ !do j=2,nlats+1
+ do j=1,nlats
+   glatspluspoles(j) = 0.5*pi - glats(j)
  enddo
 
  !==> perform Benjamin and Miller reduction for each ob, compute ob priors.
@@ -199,8 +267,10 @@ program psop
  do nob=1,nobstot
     ! make sure ob location > -90 degrees.
     if (oblocy(nob) .gt. 0.5*pi+1.e-6 .or. oblocy(nob) .lt. -0.5*pi-1.e-6) then
+       if (nproc .eq. 0) then
        print *,'WARNING: ob located outside domain',oblocy(nob)
        print *,'the ob latitude will be clipped to the nearest pole'
+       end if
     end if
     if (oblocy(nob) .lt. -0.5*pi) oblocy(nob) = -0.5*pi
     if (oblocy(nob) .gt. 0.5*pi) oblocy(nob) = 0.5*pi
@@ -216,42 +286,18 @@ program psop
     if (j .gt. 1) dyob = float(j-1) + (0.5*pi-oblocy(nob)-glatspluspoles(j-1))/(glatspluspoles(j)-glatspluspoles(j-1))
     dtob = 1.+((real(fhmin)+obtime(nob))/real(fhout))
     call lintrp3(analtemp,anal_obt,&
-                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
     call lintrp3(analpress,anal_obp,&
-                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
+                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
     call lintrp2(analzs,anal_obz(nob),&
-                 dxob,dyob,nlons+1,nlats+2)
+                 dxob,dyob,nlons+1,nlats)
     
     ! this is ob prior.
     call lintrp3(analps,anal_ob(nob),&
-                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !call lintrp3(analz(:,:,:,1),anal_obgph,&
-    !            dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !if (anal_obgph >= zob(nob)) then ! station height below 1st model level
+                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
     ! adjust Hx to (perturbed) station height
     anal_ob(nob) = &
     preduce(anal_ob(nob),anal_obp,anal_obt,zob(nob),anal_obz(nob),rlapse,grav,rd)
-    !print *,'nob,zob,anal_obz,anal_obp,anal_obt,ob,anal_ob = ',nob,zob(nob),anal_obz(nob),anal_obp,anal_obt,ob(nob),anal_ob(nob)
-    !else
-    !  ! station height above 1st model level
-    !  do k=2,nlevs
-    !     ! find 1st model level above station height
-    !     ! linearly interpolate log of pressure to station height
-    !     call lintrp3(analz3(:,:,:,k),anal_obgph,&
-    !                  dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !     if (anal_obgph >= zob(nob)) then
-    !        call lintrp3(analpress(:,:,:,k),anal_obp,&
-    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !        call lintrp3(analpress(:,:,:,k-1),anal_obpm1,&
-    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !        call lintrp3(analz(:,:,:,k-1),anal_obgphm1,&
-    !                     dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
-    !        ! linearly interpolate log(p) in height to ob elevation.
-    !        wt = (anal_obgph-zob(nob))/(anal_obgph-anal_obgphm1)
-    !        anal_ob(nob) = exp((1.-wt)*log(anal_obp) + wt*log(anal_obpm1))
-    !    endif
-    !  enddo
-    !endif
 
     zdiff = zob(nob)-anal_obz(nob)
     ! adjust ob error based on diff between station and model height.
@@ -262,21 +308,57 @@ program psop
         iuseob(nob) = 1
     end if
 ! gross error check.
+    if (nproc .eq. nanals) then ! QC using ens mean
     if (iuseob(nob) .eq. 1) then
        altob = palt(ob(nob),zob(nob),grav,rd)
-       if (altob .lt. 850. .or. altob .gt. 1090. .or. abs(ob(nob)-anal_ob(nob)-biasob(nob)) .gt. grosserrfact*stdev(nob) .or.&
-          abs(zdiff) .gt. zthresh) then
-          print *,'failed gross error check',&
-          rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),anal_ob(nob),zob(nob),anal_obz(nob),anal_obt,anal_obp
+       if (altob .lt. 850. .or. altob .gt. 1090. .or.&
+           abs(ob(nob)-anal_ob(nob)-biasob(nob)) .gt. grosserrfact*stdev(nob) .or.&
+           abs(zdiff) .gt. zthresh) then
+          print *,'failed gross error check',rad2deg*oblocx(nob),rad2deg*oblocy(nob),obtime(nob),ob(nob),anal_ob(nob),zob(nob),anal_obz(nob),altob
           iuseob(nob)=-1
           nn = nn + 1
        end if
     end if   
+    end if
  enddo
- if (nn .ne. 0) print *,nn,' failed gross qc check'
+
+ if (nn .ne. 0 .and. nproc .eq. nanals+1) print *,nn,' failed gross qc check'
+
+! distribute the recentered ob priors
+! first, gather back on last proc.
+ if (nproc .eq. nanals) then
+    do np=0,nanals-1
+       call MPI_Recv(anal_ob2(np+1,:),nobstot,MPI_REAL,np, &
+                     1,MPI_COMM_WORLD,MPI_Status,ierr)
+    enddo
+    do nob=1,nobstot
+       ! replace hx computed from ens mean with ens mean hx.
+       ensmean_ob = sum(anal_ob2(1:nanals,nob))/float(nanals)
+       !anal_ob2(nanals+1,nob) = ensmean_ob
+       ! recenter hx ensemble about hx computed from ensemble mean.
+       do nanal=1,nanals
+          anal_ob2(nanal,nob) = anal_ob2(nanal,nob) - ensmean_ob + anal_ob(nob)
+       enddo
+       anal_ob2(nanals+1,nob) = anal_ob(nob)
+    enddo
+ else
+    !print *,'nproc',nproc,'min/max anal_ob',minval(anal_ob),maxval(anal_ob)
+    call MPI_Send(anal_ob,nobstot,MPI_REAL,nanals, &
+                  1,MPI_COMM_WORLD,ierr)
+ end if
+
+! now push back out to all other procs.
+ call MPI_Bcast(anal_ob2,nobstot*(nanals+1),MPI_REAL,nanals, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
+ call MPI_Bcast(iuseob,nobstot,MPI_INTEGER,nanals, &
+               MPI_COMM_WORLD,MPI_Status,ierr)
 
  read(datestring,'(i10)') ianldate
- diag_file = "diag_conv_ps_ges."//datestring//"_ensmean.nc4"
+ if (nanal .eq. nanals+1) then
+    diag_file = "diag_conv_ps_ges."//datestring//"_ensmean.nc4"
+ else
+    diag_file = "diag_conv_ps_ges."//datestring//"_mem"//charnanal//".nc4"
+ end if
 
  call nc_diag_init(diag_file, append=.false.)
  do nob=1,nobstot
@@ -296,53 +378,65 @@ program psop
  call nc_diag_metadata("Errinv_Adjust",           stdev(nob)             )
  call nc_diag_metadata("Errinv_Final",            stdev(nob)             )
  call nc_diag_metadata("Observation",                   ob(nob)          )
- call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob(nob)+biasob(nob))   )
- call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob(nob)   )
- ! for Jacobian, need index of ps in control vector
- call nc_diag_header("jac_nnz", 1)
- call nc_diag_header("jac_nind", 1)
- st_ind(1)=ps_ind; end_ind(1)=ps_ind; val(1)=1.
- call nc_diag_data2d("Observation_Operator_Jacobian_stind", st_ind)
- call nc_diag_data2d("Observation_Operator_Jacobian_endind", end_ind)
- call nc_diag_data2d("Observation_Operator_Jacobian_val", val)
+ call nc_diag_metadata("Obs_Minus_Forecast_adjusted",   ob(nob)-(anal_ob2(nanal,nob)+biasob(nob))   )
+ call nc_diag_metadata("Obs_Minus_Forecast_unadjusted", ob(nob)-anal_ob2(nanal,nob)   )
  enddo
  call nc_diag_write
 
- open(9,form='formatted',file='psobs_prior.txt')
- rmsinnov = 0.
- meanbias = 0.
- ncount = 0
- do nob=1,nobstot
-    if (stdevorig(nob) .gt. 99.99) stdevorig(nob) = 99.99
-    if (stdev(nob) .gt. 99.99) then
-       stdev(nob) = 99.99
-       iuseob(nob) = -1
-    endif
-    if (iuseob(nob) .eq. 1) then
-       rmsinnov = rmsinnov + (ob(nob)-(anal_ob(nob)+biasob(nob)))**2
-       meanbias = meanbias + ob(nob)-(anal_ob(nob)+biasob(nob))
-       ncount = ncount + 1
-    endif
-    write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
-            nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
-            anal_ob(nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
- enddo
- print *,'ncount, rms O-F, mean O-F = ',ncount,sqrt(rmsinnov/ncount),meanbias/ncount
- 9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
-               f7.1,1x,f5.2,1x,f5.2,1x,i2)
- close(9)
+ if (nanal .eq. nanals+1) then
+    open(9,form='formatted',file='psobs_prior.txt')
+    rmsinnov = 0.
+    meanbias = 0.
+    ncount = 0
+    do nob=1,nobstot
+       if (stdevorig(nob) .gt. 99.99) stdevorig(nob) = 99.99
+       if (stdev(nob) .gt. 99.99) then
+          stdev(nob) = 99.99
+          iuseob(nob) = -1
+       endif
+       if (iuseob(nob) .eq. 1) then
+          rmsinnov = rmsinnov + (ob(nob)-(anal_ob(nob)+biasob(nob)))**2
+          meanbias = meanbias + ob(nob)-(anal_ob(nob)+biasob(nob))
+          ncount = ncount + 1
+       endif
+       write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
+               nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
+               anal_ob(nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
+    enddo
+    print *,'ncount, rms O-F, mean O-F = ',ncount,sqrt(rmsinnov/ncount),meanbias/ncount
+    9802 format(i3,1x,f7.2,1x,f6.2,1x,i5,1x,i5,1x,f6.2,1x,f7.1,1x,&
+                  f7.1,1x,f5.2,1x,f5.2,1x,i2)
+    close(9)
+ !else
+ !   filename = 'psobs_mem'//charnanal//'.txt'
+ !   print *,'write out ',trim(filename)
+ !   open(9,form='formatted',file=filename)
+ !   do nob=1,nobstot
+ !      if (stdev(nob) .gt. 99.99) stdev(nob) = 99.99
+ !      write(9,9802) stattype(nob),rad2deg*oblocx(nob),rad2deg*oblocy(nob),&
+ !              nint(zob(nob)),nint(anal_obz(nob)),obtime(nob),ob(nob),&
+ !              anal_ob2(nanal,nob)+biasob(nob),stdevorig(nob),stdev(nob),iuseob(nob)
+ !   enddo
+ !   close(9)
+ end if
+
+999 continue
+ call MPI_Barrier(MPI_COMM_WORLD,ierr)
+ call MPI_Finalize(ierr)
 
 end program psop
 
 subroutine addpolewrap(fin,fout,nx,ny)
 ! add pole and wrap-around points to lon,lat array.
  integer j,nx,ny
- real fin(nx,ny),fout(nx+1,ny+2)
- do j=2,ny+1
-    fout(1:nx,j) = fin(:,j-1)
+ real fin(nx,ny),fout(nx+1,ny)
+ !do j=2,ny+1
+ do j=1,ny
+    !fout(1:nx,j) = fin(:,j-1)
+    fout(1:nx,j) = fin(:,j)
  enddo
- fout(:,1) = sum(fin(:,1))/float(nx)
- fout(:,ny+2) = sum(fin(:,ny))/float(nx)
+ !fout(:,1) = sum(fin(:,1))/float(nx)
+ !fout(:,ny+2) = sum(fin(:,ny))/float(nx)
  fout(nx+1,:) = fout(1,:)
 end subroutine addpolewrap
 
@@ -363,22 +457,6 @@ real function preduce(ps,tpress,t,zmodel,zob,rlapse,grav,rd)
    t0 = t*(ps/tpress)**alpha ! eqn 4 from B&M
    preduce = ps*((t0 + rlapse*(zob-zmodel))/t0)**(1./alpha) ! eqn 1 from B&M
 end function preduce
-
-!real function preduce(ps,p1,t1,zob,zmodel,grav,rd)
-!! ECMWF method
-!   implicit none
-!   real, intent(in) :: rd,grav
-!   real, intent(in) :: p1,t1,zmodel,zob,ps
-!   real t0,alpha,rlap,tx,ty
-!   rlap = 0.0065
-!   ! t0 is eqn 5.21,5.22 from IFS docs, chap 5 (http://www.ecmwf.int/research/ifsdocs/CY33r1/ASSIMILATION/IFSPart2.pdf)
-!   alpha = rd*rlap/grav
-!   tx = 290.5; ty = 255.
-!   t0 = t1 + alpha*t1*log(ps/p1)
-!   t0 = 0.5*(t0 + max(ty,min(tx,t0))) ! estimated surface temp as model ps (z=zmodel)
-!   ! from Benjamin and Miller (http://dx.doi.org/10.1175/1520-0493(1990)118<2099:AASLPR>2.0.CO;2) eqn 1
-!   preduce = ps*((t0 + rlap*(zmodel-zob))/t0)**(1./alpha)
-!end function preduce
 
 real function palt(ps,zs,grav,rd)
 ! compute QNH altimeter setting (in mb) given ps (in mb), zs (in m).
