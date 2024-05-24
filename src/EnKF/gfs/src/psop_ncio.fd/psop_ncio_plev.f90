@@ -23,7 +23,7 @@ program psop
  character(len=2) charfhr
  character(len=3) charnanal
  character(len=19) sid
- real, dimension(:), allocatable :: glats, glatspluspoles, pfull
+ real, dimension(:), allocatable :: glats, glatspluspoles, ak, bk, pfull
  real, dimension(:), allocatable :: oblocx,oblocy,ob,zob,obtime,stdev,&
                                     anal_obz,stdevorig,anal_ob,biasob
  real, dimension(:,:), allocatable :: psg,zsg,analzs,anal_ob2
@@ -184,6 +184,7 @@ program psop
 
 
  dset = open_dataset(trim(filenamein),errcode=iret)
+ !print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
 
  if (iret .ne. 0) then
     print *,'error reading file ',iret,trim(filenamein)
@@ -194,7 +195,6 @@ program psop
     londim = get_dim(dset,'grid_xt'); nlons = londim%len
     latdim = get_dim(dset,'grid_yt'); nlats = latdim%len
     levdim = get_dim(dset,'pfull');   nlevs = levdim%len
-    print *,'filenamein,nlons,nlats,nlevs= ',trim(adjustl(filenamein)),nlons,nlats,nlevs
     allocate(psg(nlons,nlats))
     allocate(zsg(nlons,nlats))
     allocate(tempg(nlons,nlats,nlevs))
@@ -204,49 +204,34 @@ program psop
     allocate(pslg(nlons,nlats,nlevs))
     allocate(psig(nlons,nlats,nlevs+1))
     allocate(glats(nlats))
-    allocate(glatspluspoles(nlats))
+    allocate(glatspluspoles(nlats+2))
     allocate(pfull(nlevs))
-    allocate(analps(nlons+1,nlats,ntimes))
-    allocate(analtemp(nlons+1,nlats,ntimes))
-    allocate(analpress(nlons+1,nlats,ntimes))
-    allocate(analzs(nlons+1,nlats))
+    allocate(analps(nlons+1,nlats+2,ntimes))
+    allocate(analtemp(nlons+1,nlats+2,ntimes))
+    allocate(analpress(nlons+1,nlats+2,ntimes))
+    allocate(analzs(nlons+1,nlats+2))
     call read_vardata(dset,'hgtsfc',zsg)
     call read_vardata(dset, 'grid_yt', glats)
     call read_vardata(dset, 'pfull', pfull)
-    if (nanal .eq. nanals+1) then
-       print *,'pfull',pfull
-       print *,'pfull at nlevt',pfull(nlevt)
-    endif
  end if
 
  call read_vardata(dset,'tmp',tempg)
- if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max temp', minval(tempg),maxval(tempg)
  call read_vardata(dset,'spfh',qg)
- if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max spfh', minval(qg),maxval(qg)
- tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv, flip vertical
- if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max tv', minval(tvg),maxval(tvg)
- if (has_var(dset,'mslp')) then
-    call read_vardata(dset,'mslp',psg)
- else
-    call read_vardata(dset,'pressfc',psg)
- endif
-
+ tvg = tempg(:,:,nlevs:1:-1) * ( 1.0 + fv*qg(:,:,nlevs:1:-1) ) ! convert T to Tv, flip vertical
+ call read_vardata(dset,'pressfc',psg)
  call close_dataset(dset)
  do k=1,nlevs
    ! layer pressure from Phillips vertical interpolation.
-   pslg(:,:,k) = pfull(k)
+   pslg(:,:,nlevs-k+1) = pfull(k)
  enddo
  psg = psg/100. ! convert to mb (units of obs)
+ print *,nfhr,nanal,minval(psg),maxval(psg)
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) then
  print *,'min/max mslp',minval(psg),maxval(psg)
  print *,'min/max zsg',minval(zsg),maxval(zsg)
+ print *,'min/max pslg',minval(pslg),maxval(pslg)
  endif
- !if (nproc .eq. 0 .and. nfhr .eq. fhmin) then
- !   print *,'psg min/max ',minval(psg),maxval(psg)
- !   do k=1,nlevs
- !      print *,k,minval(psig(:,:,k)),maxval(psig(:,:,k)),minval(pslg(:,:,k)),maxval(pslg(:,:,k)),minval(tvg(:,:,k)),maxval(tvg(:,:,k))
- !   enddo
- !endif
+ ! pslg = pslg/100.
 
  ! add wraparound and pole points.
  call addpolewrap(psg,analps(:,:,ntime),nlons,nlats)
@@ -262,11 +247,10 @@ program psop
 
  !==> 0.5*pi-latitudes with poles included (used in bilinear interp routine).
  glats = deg2rad*glats
- !glatspluspoles(1) = 0.
- !glatspluspoles(nlats+2) = pi
- !do j=2,nlats+1
- do j=1,nlats
-   glatspluspoles(j) = 0.5*pi - glats(j)
+ glatspluspoles(1) = 0.
+ glatspluspoles(nlats+2) = pi
+ do j=2,nlats+1
+   glatspluspoles(j) = 0.5*pi - glats(j-1)
  enddo
 
  !==> perform Benjamin and Miller reduction for each ob, compute ob priors.
@@ -294,15 +278,15 @@ program psop
     if (j .gt. 1) dyob = float(j-1) + (0.5*pi-oblocy(nob)-glatspluspoles(j-1))/(glatspluspoles(j)-glatspluspoles(j-1))
     dtob = 1.+((real(fhmin)+obtime(nob))/real(fhout))
     call lintrp3(analtemp,anal_obt,&
-                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
+                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
     call lintrp3(analpress,anal_obp,&
-                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
+                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
     call lintrp2(analzs,anal_obz(nob),&
-                 dxob,dyob,nlons+1,nlats)
+                 dxob,dyob,nlons+1,nlats+2)
     
     ! this is ob prior.
     call lintrp3(analps,anal_ob(nob),&
-                 dxob,dyob,dtob,nlons+1,nlats,ntimes)
+                 dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
     ! adjust Hx to (perturbed) station height
     anal_ob(nob) = &
     preduce(anal_ob(nob),anal_obp,anal_obt,zob(nob),anal_obz(nob),rlapse,grav,rd)
@@ -437,14 +421,12 @@ end program psop
 subroutine addpolewrap(fin,fout,nx,ny)
 ! add pole and wrap-around points to lon,lat array.
  integer j,nx,ny
- real fin(nx,ny),fout(nx+1,ny)
- !do j=2,ny+1
- do j=1,ny
-    !fout(1:nx,j) = fin(:,j-1)
-    fout(1:nx,j) = fin(:,j)
+ real fin(nx,ny),fout(nx+1,ny+2)
+ do j=2,ny+1
+    fout(1:nx,j) = fin(:,j-1)
  enddo
- !fout(:,1) = sum(fin(:,1))/float(nx)
- !fout(:,ny+2) = sum(fin(:,ny))/float(nx)
+ fout(:,1) = sum(fin(:,1))/float(nx)
+ fout(:,ny+2) = sum(fin(:,ny))/float(nx)
  fout(nx+1,:) = fout(1,:)
 end subroutine addpolewrap
 

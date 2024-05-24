@@ -29,6 +29,15 @@ if(OpenMP_Fortran_FOUND)
   target_link_libraries(psop_ncio_mslp.x PRIVATE OpenMP::OpenMP_Fortran)
 endif()
 
+add_executable(psop_ncio_plev.x psop_ncio_plev.f90)
+target_link_libraries(psop_ncio_plev.x PRIVATE NetCDF::NetCDF_Fortran)
+target_link_libraries(psop_ncio_plev.x PRIVATE ncio::ncio)
+target_link_libraries(psop_ncio_plev.x PRIVATE ncdiag::ncdiag)
+if(OpenMP_Fortran_FOUND)
+  target_link_libraries(psop_ncio_plev.x PRIVATE OpenMP::OpenMP_Fortran)
+endif()
+
+
 # Install executable targets
 install(TARGETS psop_ncio.x RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS psop_ncio_ensmean.x RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
