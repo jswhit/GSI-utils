@@ -79,8 +79,8 @@ PROGRAM calc_increment_ncio
   forcing_factor = 1.00
   no_mpinc = .true.
   no_delzinc = .false.
-  taper_strat = .false. ! taper humidity, microphysics in stratosphere
-  taper_strat_ozone = .true. ! taper ozone near model top 
+  taper_strat = .true. ! taper humidity, microphysics in stratosphere
+  taper_strat_ozone = .false. ! taper ozone near model top 
   taper_pbl = .false. ! taper everything in PBL (controlled by bk_top,bk_bot)
   ! damp humidity increments between these two levels if taper_strat=T
   ak_bot = 10000. ! units Pa
@@ -424,6 +424,7 @@ PROGRAM calc_increment_ncio
   ! infer delp increment from ps increment
   if (.not. has_dpres) then
      print *,'inferring delp_inc from ps inc'
+     print *,'min/max ps increment',minval(values_2d_inc),maxval(values_2d_inc)
      ncvarname = 'delp_inc'
      ! ak,bk go from top to bottom, so bk(k+1)-bk(k) > 0
      do k=1,nlevs
