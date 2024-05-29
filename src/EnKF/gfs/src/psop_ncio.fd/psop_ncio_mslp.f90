@@ -223,7 +223,7 @@ program psop
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max temp', minval(tempg),maxval(tempg)
  call read_vardata(dset,'spfh',qg)
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max spfh', minval(qg),maxval(qg)
- tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv, flip vertical
+ tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max tv', minval(tvg),maxval(tvg)
  if (has_var(dset,'mslp')) then
     call read_vardata(dset,'mslp',psg)
