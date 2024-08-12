@@ -1,13 +1,14 @@
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!! module inc2anl 
+!! module inc2anl
 !!        contains subroutines for calculating analysis fields
-!!        for a given input background and increment 
+!!        for a given input background and increment
 !! Original: 2019-09-18   martin   - original module
 !!           2019-10-24   martin   - removed support for NEMSIO background but
 !!                                   allows for either NEMSIO or netCDF analysis write
 !!           2020-01-21   martin   - parallel IO support added
+!!           2024-08-12   martin   - aerosol support added
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-module inc2anl 
+module inc2anl
   implicit none
 
   private
@@ -17,7 +18,10 @@ module inc2anl
   integer, parameter :: nincv=10
   character(len=7) :: incvars_nemsio(nincv), incvars_netcdf(nincv), incvars_ncio(nincv)
   integer, parameter :: nnciov=20
-  character(len=7) :: iovars_netcdf(nnciov)
+  integer, parameter :: naero=14
+  integer, parameter :: naero_copy=6
+  character(len=7) :: iovars_netcdf(nnciov), iovars_aero(naero), copyvars_aero(naero_copy)
+  character(len=50) :: incvars_aero(naero)
 
   data incvars_nemsio / 'ugrd   ', 'vgrd   ', 'dpres  ', 'delz   ', 'o3mr   ',&
                         'tmp    ', 'spfh   ', 'clwmr  ', 'icmr   ', 'pres   '/
@@ -29,6 +33,20 @@ module inc2anl
                         'delz   ', 'dpres  ', 'dzdt   ', 'grle   ', 'hgtsfc ',&
                         'icmr   ', 'o3mr   ', 'pressfc', 'rwmr   ', 'snmr   ',&
                         'spfh   ', 'tmp    ', 'ugrd   ', 'vgrd   ', 'cld_amt'/
+  data iovars_aero / 'so4    ', 'bc1    ', 'bc2    ', 'oc1    ', 'oc2    ', &
+                     'dust1  ', 'dust2  ', 'dust3  ', 'dust4  ', 'dust5  ',&
+                     'seas1  ', 'seas2  ', 'seas3  ', 'seas4  '/
+  data incvars_aero / 'mass_fraction_of_sulfate_in_air',&
+                      'mass_fraction_of_hydrophobic_black_carbon_in_air', &
+                      'mass_fraction_of_hydrophilic_black_carbon_in_air', &
+                      'mass_fraction_of_hydrophobic_organic_carbon_in_air', &
+                      'mass_fraction_of_hydrophilic_organic_carbon_in_air', &
+                      'mass_fraction_of_dust001_in_air', 'mass_fraction_of_dust002_in_air', &
+                      'mass_fraction_of_dust003_in_air', 'mass_fraction_of_dust004_in_air', &
+                      'mass_fraction_of_dust005_in_air', 'mass_fraction_of_sea_salt001_in_air', &
+                      'mass_fraction_of_sea_salt002_in_air', 'mass_fraction_of_sea_salt003_in_air', &
+                      'mass_fraction_of_sea_salt004_in_air' /
+  data copyvars_aero / 'seas5  ', 'so2    ', 'dms    ', 'msa    ', 'pm25   ', 'pm10   ' /
 
 contains
   subroutine gen_anl
@@ -38,7 +56,7 @@ contains
   !            increment, add the two together, and write out
   !            the analysis to a new file
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    use vars_calc_analysis, only: mype 
+    use vars_calc_analysis, only: mype, do_aero
     implicit none
     ! variables local to this subroutine
     integer :: i, j, iincvar
@@ -68,10 +86,23 @@ contains
         end if
       else
         ! otherwise just write out what is in the input to the output
-        if (mype==0) print *, 'Copying from Background ', iovars_netcdf(i) 
+        if (mype==0) print *, 'Copying from Background ', iovars_netcdf(i)
         call copy_ges_to_anl(iovars_netcdf(i))
       end if
     end do
+
+    ! if including aerosols, loop and add them
+    if (do_aero) then
+      do i=1,naero
+        if (mype==0) print *, 'Adding Increment to ', iovars_aero(i)
+        call add_aero_inc(iovars_aero(i), incvars_aero(i))
+      end do
+      ! need to handle fields that just need copied
+      do i=1,naero_copy
+        if (mype==0) print *, 'Copying from Background ', copyvars_aero(i)
+        call copy_ges_to_anl(copyvars_aero(i))
+      end do
+    end if
 
   end subroutine gen_anl
 
@@ -157,17 +188,60 @@ contains
             end do
           end if
       end select
-    else 
+    else
       if (mype == 0) write(6,*) varname, 'not in background file, skipping...'
     end if
 
   end subroutine copy_ges_to_anl
 
+  subroutine add_aero_inc(fcstvar, incvar)
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+  ! subroutine add_aero_inc
+  !            generic subroutine for adding increment to background
+  !            and writing out to analysis for aerosol variables
+  !  args:
+  !       fcstvar - input string of netCDF fcst/anal var name
+  !       incvar  - input string of netCDF increment var name
+  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    use vars_calc_analysis, only: fcstncfile, anlncfile, aero_file,&
+    nlat, nlon, nlev, anlfile, levpe, mype
+    use module_ncio, only: Dataset, read_vardata, write_vardata, &
+        open_dataset, close_dataset, has_var
+    use nemsio_module
+    implicit none
+    ! input vars
+    character(7), intent(in) :: fcstvar
+    character(50), intent(in) :: incvar
+    ! local variables
+    real, allocatable, dimension(:,:,:) :: work3d_bg
+    real, allocatable, dimension(:,:) :: work3d_inc
+    real, allocatable, dimension(:) :: work1d
+    integer :: j,jj,k,krev,iret
+    type(Dataset) :: incncfile
+    do k=1,nlev
+      if (mype == levpe(k)) then
+        ! get first guess
+        call read_vardata(fcstncfile, trim(fcstvar), work3d_bg, nslice=k, slicedim=3)
+        ! get increment
+        incncfile = open_dataset(aero_file)
+        call read_vardata(incncfile, trim(incvar), work3d_inc, nslice=k, slicedim=1)
+        ! add increment to background
+        work3d_bg(:,:,1) = work3d_bg(:,:,1) + work3d_inc(:,:)
+        ! write out analysis to file
+        call write_vardata(anlncfile, trim(fcstvar), work3d_bg, nslice=k, slicedim=3)
+      end if
+    end do
+    ! clean up and close
+    deallocate(work3d_bg, work3d_inc)
+    call close_dataset(incncfile)
+
+  end subroutine add_aero_inc
+
   subroutine add_increment(fcstvar, incvar)
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! subroutine add_increment
   !            generic subroutine for adding increment to background
-  !            and writing out to analysis 
+  !            and writing out to analysis
   !  args:
   !       fcstvar - input string of netCDF fcst/anal var name
   !       incvar  - input string of netCDF increment var name
@@ -189,7 +263,7 @@ contains
     real, allocatable, dimension(:) :: work1d
     integer :: j,jj,k,krev,iret
     type(Dataset) :: incncfile
-    
+
     if (has_var(fcstncfile, fcstvar)) then
       do k=1,nlev
         if (mype == levpe(k)) then
@@ -234,17 +308,17 @@ contains
       end if
       deallocate(work3d_bg)
       call close_dataset(incncfile)
-    else 
+    else
       write(6,*) fcstvar, ' not in background file, skipping...'
     end if
-  
+
   end subroutine add_increment
 
   subroutine add_psfc_increment
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! subroutine add_psfc_increment
   !            special case of getting surface pressure analysis from
-  !            bk5 and delp increment to get sfc pressure increment 
+  !            bk5 and delp increment to get sfc pressure increment
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     use vars_calc_analysis, only: fcstncfile, anlncfile, nlat, nlon, incr_file,&
                                   use_nemsio_anl, anlfile, nlev
@@ -260,7 +334,7 @@ contains
     type(Dataset) :: incncfile
 
     ! get bk5 from attributes
-    call read_attribute(fcstncfile, 'bk', bk5) 
+    call read_attribute(fcstncfile, 'bk', bk5)
     ! read in delp increment to get ps increment
     incncfile = open_dataset(incr_file)
     call read_vardata(incncfile, 'delp_inc', work3d_inc)
@@ -277,7 +351,7 @@ contains
     ! write out to file
     if (use_nemsio_anl) then
       allocate(work1d(nlon*nlat))
-      ! now write out new psfc to NEMSIO analysis file 
+      ! now write out new psfc to NEMSIO analysis file
       work1d = reshape(work2d,(/size(work1d)/))
       call nemsio_writerecv(anlfile, 'pres', 'sfc', 1, work1d, iret=iret)
       if (iret /=0) write(6,*) 'Error with NEMSIO write sfc pressure'
