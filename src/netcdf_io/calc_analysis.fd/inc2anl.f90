@@ -15,24 +15,28 @@ module inc2anl
 
   public :: gen_anl, close_files
 
-  integer, parameter :: nincv=10
+  integer, parameter :: nincv=13
   character(len=7) :: incvars_nemsio(nincv), incvars_netcdf(nincv), incvars_ncio(nincv)
-  integer, parameter :: nnciov=20
+  integer, parameter :: nnciov=22
   integer, parameter :: naero=14
   integer, parameter :: naero_copy=6
   character(len=7) :: iovars_netcdf(nnciov), iovars_aero(naero), copyvars_aero(naero_copy)
   character(len=50) :: incvars_aero(naero)
 
   data incvars_nemsio / 'ugrd   ', 'vgrd   ', 'dpres  ', 'delz   ', 'o3mr   ',&
-                        'tmp    ', 'spfh   ', 'clwmr  ', 'icmr   ', 'pres   '/
+                        'tmp    ', 'spfh   ', 'clwmr  ', 'icmr   ', 'rwmr   ',&
+                        'snmr   ', 'grle   ', 'pres   '/
   data incvars_netcdf / 'u      ', 'v      ', 'delp   ', 'delz   ', 'o3mr   ',&
-                        'T      ', 'sphum  ', 'liq_wat', 'icmr   ', 'pres   '/
-  data incvars_ncio / 'ugrd   ', 'vgrd   ', 'dpres  ', 'delz   ', 'o3mr   ',&
-                        'tmp    ', 'spfh   ', 'clwmr  ', 'icmr   ', 'pressfc'/
+                        'T      ', 'sphum  ', 'liq_wat', 'icmr   ', 'rwmr   ',&
+                        'snmr   ', 'grle   ', 'pres   '/
+  data incvars_ncio /   'ugrd   ', 'vgrd   ', 'dpres  ', 'delz   ', 'o3mr   ',&
+                        'tmp    ', 'spfh   ', 'clwmr  ', 'icmr   ', 'rwmr   ',&
+                        'snmr   ', 'grle   ', 'pressfc'/
   data iovars_netcdf /  'grid_xt', 'grid_yt', 'pfull  ', 'phalf  ', 'clwmr  ',&
                         'delz   ', 'dpres  ', 'dzdt   ', 'grle   ', 'hgtsfc ',&
                         'icmr   ', 'o3mr   ', 'pressfc', 'rwmr   ', 'snmr   ',&
-                        'spfh   ', 'tmp    ', 'ugrd   ', 'vgrd   ', 'cld_amt'/
+                        'spfh   ', 'tmp    ', 'ugrd   ', 'vgrd   ', 'cld_amt',&
+                        'nccice ', 'nconrd '/
   data iovars_aero / 'so4    ', 'bc1    ', 'bc2    ', 'oc1    ', 'oc2    ', &
                      'dust1  ', 'dust2  ', 'dust3  ', 'dust4  ', 'dust5  ',&
                      'seas1  ', 'seas2  ', 'seas3  ', 'seas4  '/

@@ -30,7 +30,7 @@
 
  implicit none
 
- integer, parameter :: num_recs = 9
+ integer, parameter :: num_recs = 12
 
 ! Declare externals
  external :: w3tagb, netcdf_err, splat, w3tage
@@ -57,6 +57,7 @@
  integer :: id_t_inc_out, id_sphum_inc_out
  integer :: id_liq_wat_inc_out, id_o3mr_inc_out
  integer :: id_icmr_inc_out, id_dim
+ integer :: id_rwmr_inc_out, id_snmr_inc_out, id_grle_inc_out
  integer :: header_buffer_val = 16384
  integer :: kgds_in(200), kgds_out(200)
  integer :: ip, ipopt(20), no
@@ -79,7 +80,8 @@
 
  ! NOTE: u_inc,v_inc must be consecutive
  data records /'u_inc', 'v_inc', 'delp_inc', 'delz_inc', 'T_inc', &
-               'sphum_inc', 'liq_wat_inc', 'o3mr_inc', 'icmr_inc' /
+               'sphum_inc', 'liq_wat_inc', 'o3mr_inc', 'icmr_inc', &
+               'rwmr_inc', 'snmr_inc', 'grle_inc' /
 
  namelist /setup/ lon_out, lat_out, outfile, infile, lev
 
@@ -187,7 +189,16 @@ call mpi_comm_size(mpi_comm_world, npes, mpierr)
   
    error = nf90_def_var(ncid_out, 'icmr_inc', nf90_float, (/dim_lon_out,dim_lat_out,dim_lev_out/), id_icmr_inc_out)
    call netcdf_err(error, 'defining variable icmr_inc for file='//trim(outfile) )
+
+   error = nf90_def_var(ncid_out, 'rwmr_inc', nf90_float, (/dim_lon_out,dim_lat_out,dim_lev_out/), id_rwmr_inc_out)
+   call netcdf_err(error, 'defining variable rwmr_inc for file='//trim(outfile) )
   
+   error = nf90_def_var(ncid_out, 'snmr_inc', nf90_float, (/dim_lon_out,dim_lat_out,dim_lev_out/), id_snmr_inc_out)
+   call netcdf_err(error, 'defining variable snmr_inc for file='//trim(outfile) )
+
+   error = nf90_def_var(ncid_out, 'grle_inc', nf90_float, (/dim_lon_out,dim_lat_out,dim_lev_out/), id_grle_inc_out)
+   call netcdf_err(error, 'defining variable grle_inc for file='//trim(outfile) )
+
    error = nf90_put_att(ncid_out, nf90_global, 'source', 'GSI')
    call netcdf_err(error, 'defining source attribute for file='//trim(outfile) )
   
@@ -354,7 +365,6 @@ call mpi_comm_size(mpi_comm_world, npes, mpierr)
      call netcdf_err(error, 'inquiring ' // trim(records(rec)) // ' id for file='//trim(infile) )
      error = nf90_get_var(ncid_in, id_var, dummy_in)
      call netcdf_err(error, 'reading ' //  trim(records(rec)) // ' for file='//trim(infile) )
-  
   
      ip = 0 ! bilinear
      ipopt = 0
