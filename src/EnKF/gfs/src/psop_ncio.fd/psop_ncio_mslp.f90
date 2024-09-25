@@ -11,6 +11,7 @@ program psop
  include  'mpif.h'
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
+ logical use_mslp
  character(len=120) filenamein,obsfile,filename,diag_file,datapath
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
@@ -225,10 +226,17 @@ program psop
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max spfh', minval(qg),maxval(qg)
  tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max tv', minval(tvg),maxval(tvg)
- if (has_var(dset,'mslp')) then
-    call read_vardata(dset,'mslp',psg)
- else
+ if (has_var(dset,'pressfc')) then
     call read_vardata(dset,'pressfc',psg)
+    use_mslp = .false.
+    if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using actual surface pressure...'
+ else if (has_var(dset,'mslp')) then
+    call read_vardata(dset,'mslp',psg)
+    use_mslp = .true.
+    if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using mean sea level pressure..'
+ else
+    print *,'must have either mslp or pressfc, exiting now...'
+    stop
  endif
 
  call close_dataset(dset)
@@ -238,7 +246,12 @@ program psop
  enddo
  psg = psg/100. ! convert to mb (units of obs)
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) then
- print *,'min/max mslp',minval(psg),maxval(psg)
+ if (use_mslp) then
+     zsg=0
+     print *,'min/max mslp',minval(psg),maxval(psg)
+ else
+     print *,'min/max psg',minval(psg),maxval(psg)
+ endif
  print *,'min/max zsg',minval(zsg),maxval(zsg)
  endif
  !if (nproc .eq. 0 .and. nfhr .eq. fhmin) then
@@ -272,6 +285,7 @@ program psop
  !==> perform Benjamin and Miller reduction for each ob, compute ob priors.
  !    also do gross qc checks.
  nn = 0
+ if (use_mslp) anal_obz = 0 ! MSLP
  do nob=1,nobstot
     ! make sure ob location > -90 degrees.
     if (oblocy(nob) .gt. 0.5*pi+1.e-6 .or. oblocy(nob) .lt. -0.5*pi-1.e-6) then
@@ -297,8 +311,10 @@ program psop
                  dxob,dyob,dtob,nlons+1,nlats,ntimes)
     call lintrp3(analpress,anal_obp,&
                  dxob,dyob,dtob,nlons+1,nlats,ntimes)
-    call lintrp2(analzs,anal_obz(nob),&
-                 dxob,dyob,nlons+1,nlats)
+    if (.not. use_mslp) then
+       call lintrp2(analzs,anal_obz(nob),&
+                    dxob,dyob,nlons+1,nlats)
+    endif
     
     ! this is ob prior.
     call lintrp3(analps,anal_ob(nob),&
