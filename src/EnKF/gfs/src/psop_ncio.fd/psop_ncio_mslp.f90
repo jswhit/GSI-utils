@@ -11,7 +11,7 @@ program psop
  include  'mpif.h'
  type(Dataset) :: dset
  type(Dimension) :: londim,latdim,levdim
- logical use_mslp
+ logical :: use_mslp=.false.
  character(len=120) filenamein,obsfile,filename,diag_file,datapath
  character(len=10) datestring
  integer iret,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nanals,nfhr,nobstot,&
@@ -33,7 +33,7 @@ program psop
  integer, allocatable, dimension(:) :: stattype,iuseob
  character(len=8), allocatable :: statid(:)
  namelist /nam_psop/nlevt,fhmin,fhmax,fhout,datestring,rlapse,nanals,&
-                    obsfile,datapath,zthresh,errfact,delz_const,grosserrfact
+                    use_mslp,obsfile,datapath,zthresh,errfact,delz_const,grosserrfact
 
 ! Initialize mpi
  call MPI_Init(ierr)
@@ -226,18 +226,34 @@ program psop
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max spfh', minval(qg),maxval(qg)
  tvg = tempg * ( 1.0 + fv*qg ) ! convert T to Tv
  if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'min/max tv', minval(tvg),maxval(tvg)
- if (has_var(dset,'pressfc')) then
-    call read_vardata(dset,'pressfc',psg)
-    use_mslp = .false.
-    if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using actual surface pressure...'
- else if (has_var(dset,'mslp')) then
-    call read_vardata(dset,'mslp',psg)
-    use_mslp = .true.
-    if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using mean sea level pressure..'
- else
-    print *,'must have either mslp or pressfc, exiting now...'
+
+ if (.not. use_mslp .and. .not. has_var(dset,'pressfc')) then
+    print *,'no pressfc variable, set use_mslp=T'
     stop
  endif
+ if ( use_mslp .and. .not. has_var(dset,'mslp')) then
+    print *,'no mslp variable, set use_mslp=F'
+    stop
+ endif
+ if (use_mslp) then
+     if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using mean sea level pressure..'
+     call read_vardata(dset,'mslp',psg)
+ else
+     if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using actual surface pressure...'
+     call read_vardata(dset,'pressfc',psg)
+ endif
+ !if (has_var(dset,'pressfc')) then
+ !   call read_vardata(dset,'pressfc',psg)
+ !   use_mslp = .false.
+ !   if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using actual surface pressure...'
+ !else if (has_var(dset,'mslp')) then
+ !   call read_vardata(dset,'mslp',psg)
+ !   use_mslp = .true.
+ !   if (nfhr .eq. fhmax .and. nanal .eq. nanals+1) print *,'using mean sea level pressure..'
+ !else
+ !   print *,'must have either mslp or pressfc, exiting now...'
+ !   stop
+ !endif
 
  call close_dataset(dset)
  do k=1,nlevs
