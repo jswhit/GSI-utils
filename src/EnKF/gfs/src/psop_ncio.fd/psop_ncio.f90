@@ -297,10 +297,10 @@ program psop
     ! adjust ob error based on diff between station and model height.
     ! (GSI uses 0.005 for delz_const?)
     stdev(nob) = stdev(nob) + delz_const*abs(zdiff)
-    iuseob(nob) = -1
-    if (obtime(nob) .ge. -3. .and. obtime(nob) .le. 3) then 
-        iuseob(nob) = 1
-    end if
+    iuseob(nob) = 1
+    !if (obtime(nob) .ge. -3. .and. obtime(nob) .le. 3) then 
+    !    iuseob(nob) = 1
+    !end if
 ! gross error check.
     if (nproc .eq. nanals) then ! QC using ens mean
     if (iuseob(nob) .eq. 1) then
