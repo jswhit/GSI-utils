@@ -15,7 +15,7 @@ program psop
  integer iret,ps_ind,nlats,nlons,nlevs,ntrac,ntrunc,ierr,nfhr,nobstot,ncount,&
          st_ind(1),end_ind(1),nob,j,iunit,fhmin,fhmax,fhout,ntimes,&
          nchar,nreal,ii,nn,nlevt,ntime,np,k,nobsh,izob,iunit_nml,ianldate
- real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,grosserrfact,&
+ real dxob,dyob,dtob,zerr,anal_obt,anal_obp,rlapse,grosserrfact,ps_fact,anal_ob_save,&
       val(1),delz_const,ensmean_ob,bias,preduce,palt,zthresh,zdiff,altob,errfact
  real cp,rd,rv,kap,kapr,kap1,fv,pi,grav,deg2rad,rad2deg,rmsinnov,meanbias
  character(len=2) charfhr
@@ -229,8 +229,11 @@ program psop
     !            dxob,dyob,dtob,nlons+1,nlats+2,ntimes)
     !if (anal_obgph >= zob(nob)) then ! station height below 1st model level
     ! adjust Hx to (perturbed) station height
+    anal_ob_save = anal_ob(nob)
     anal_ob(nob) = &
     preduce(anal_ob(nob),anal_obp,anal_obt,zob(nob),anal_obz(nob),rlapse,grav,rd)
+    ps_fact = anal_ob(nob)/anal_ob_save 
+    !print*,'nob,dz,ps_fact',nob,zob(nob)-anal_obz(nob),ps_fact
     !print *,'nob,zob,anal_obz,anal_obp,anal_obt,ob,anal_ob = ',nob,zob(nob),anal_obz(nob),anal_obp,anal_obt,ob(nob),anal_ob(nob)
     !else
     !  ! station height above 1st model level
@@ -301,7 +304,7 @@ program psop
  ! for Jacobian, need index of ps in control vector
  call nc_diag_header("jac_nnz", 1)
  call nc_diag_header("jac_nind", 1)
- st_ind(1)=ps_ind; end_ind(1)=ps_ind; val(1)=1.
+ st_ind(1)=ps_ind; end_ind(1)=ps_ind; val(1)=ps_fact
  call nc_diag_data2d("Observation_Operator_Jacobian_stind", st_ind)
  call nc_diag_data2d("Observation_Operator_Jacobian_endind", end_ind)
  call nc_diag_data2d("Observation_Operator_Jacobian_val", val)
