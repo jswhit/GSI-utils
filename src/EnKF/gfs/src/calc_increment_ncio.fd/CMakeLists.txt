@@ -6,6 +6,7 @@ endif()
 
 add_executable(calc_increment_ncio.x calc_increment_ncio.f90)
 target_link_libraries(calc_increment_ncio.x PRIVATE NetCDF::NetCDF_Fortran)
+target_link_libraries(calc_increment_ncio.x PRIVATE sp::sp_4)
 target_link_libraries(calc_increment_ncio.x PRIVATE ncio::ncio)
 
 # Install executable targets
