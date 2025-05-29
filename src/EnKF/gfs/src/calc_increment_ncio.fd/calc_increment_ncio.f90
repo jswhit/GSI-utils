@@ -70,7 +70,7 @@ PROGRAM calc_increment_ncio
              taper_strat_ozone,do_smooth,has_u_inc,has_v_inc
   real rd,rv,fv,grav,ak_bot,ak_top,bk_bot,bk_top,forcing_factor,ak_top_ozone,ak_bot_ozone
   namelist /setup/ ak_top, ak_bot, bk_top, bk_bot, forcing_factor,&
-                   ak_top_ozone, ak_bot_ozone, do_smooth, smoothparm, &
+                   ak_top_ozone, ak_bot_ozone, do_smooth, smoothparm, window,&
                    taper_strat, taper_strat_ozone, taper_pbl, no_mpinc, no_delzinc
 
   rd     = 2.8705e+2
@@ -121,6 +121,9 @@ PROGRAM calc_increment_ncio
   write(6,*)'no_mpinc',no_mpinc
   write(6,*)'no_delzinc',no_delzinc
   write(6,*)'taper_strat',taper_strat
+  write(6,*)'do_smnooth',do_smooth
+  write(6,*)'smoothparm',smoothparm
+  write(6,*)'smoothing window',window
   if (taper_strat) then
     write(6,*), 'ak_bot,ak_top',ak_bot,ak_top
   endif
@@ -161,7 +164,7 @@ PROGRAM calc_increment_ncio
   endif
 
   if ( do_smooth ) then
-     ntrunc = nlons-2
+     ntrunc = nlats-2
 !    Set up smoother
      allocate(smoothfact(0:ntrunc,0:ntrunc))
      allocate(rwork_spc((ntrunc+1)*(ntrunc+2)))
@@ -471,7 +474,7 @@ PROGRAM calc_increment_ncio
               values_3d_inc(:,nlats:1:-1,:) = incv ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
               call write_ncdata3d(values_3d_inc,'v_inc',nlons,nlats,nlevs,ncfileid,dimid_3d)
-           else
+           else if (.not. has_v_inc .and. .not. has_u_inc) then
               values_3d_inc(:,nlats:1:-1,:) = inc ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
               call write_ncdata3d(values_3d_inc,ncvarname,nlons,nlats,nlevs,ncfileid,dimid_3d)
