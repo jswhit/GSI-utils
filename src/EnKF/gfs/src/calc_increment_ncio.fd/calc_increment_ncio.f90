@@ -51,7 +51,7 @@ PROGRAM calc_increment_ncio
 
   character*500 filename_anal,filename_inc,filename_fg
   character*3 charnin
-  character(len=nf90_max_name) :: ncvarname
+  character(len=nf90_max_name) :: ncvarname,ncvarname_tmp
   integer k,nvar,ndims,nlats,nlons,nlevs,iret,nlons2,nlats2,nlevs2
   real, allocatable, dimension(:)     :: lats_tmp, lats, lons, ak, bk, ilevs, levs
   real, allocatable, dimension(:,:)   :: values_2d_fg,values_2d_anal,values_2d_inc,&
@@ -121,7 +121,7 @@ PROGRAM calc_increment_ncio
   write(6,*)'no_mpinc',no_mpinc
   write(6,*)'no_delzinc',no_delzinc
   write(6,*)'taper_strat',taper_strat
-  write(6,*)'do_smnooth',do_smooth
+  write(6,*)'do_smooth',do_smooth
   write(6,*)'smoothparm',smoothparm
   write(6,*)'smoothing window',window
   if (taper_strat) then
@@ -470,10 +470,12 @@ PROGRAM calc_increment_ncio
               enddo
               values_3d_inc(:,nlats:1:-1,:) = incu ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
-              call write_ncdata3d(values_3d_inc,'u_inc',nlons,nlats,nlevs,ncfileid,dimid_3d)
+              ncvarname_tmp='u_inc'
+              call write_ncdata3d(values_3d_inc,ncvarname_tmp,nlons,nlats,nlevs,ncfileid,dimid_3d)
               values_3d_inc(:,nlats:1:-1,:) = incv ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
-              call write_ncdata3d(values_3d_inc,'v_inc',nlons,nlats,nlevs,ncfileid,dimid_3d)
+              ncvarname_tmp='v_inc'
+              call write_ncdata3d(values_3d_inc,ncvarname_tmp,nlons,nlats,nlevs,ncfileid,dimid_3d)
            else if (.not. has_v_inc .and. .not. has_u_inc) then
               values_3d_inc(:,nlats:1:-1,:) = inc ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
