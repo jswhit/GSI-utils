@@ -65,7 +65,7 @@ PROGRAM calc_increment_ncio
   integer, dimension(3) :: dimid_3d
   integer, dimension(1) :: dimid_1d
   integer varid_lon,varid_lat,varid_lev,varid_ilev,varid_hyai,varid_hybi,&
-          dimid_lon,dimid_lat,dimid_lev,dimid_ilev,ncfileid,ncstatus,idrt,ntrunc,smoothparm,window
+          dimid_lon,dimid_lat,dimid_lev,dimid_ilev,ncfileid,ncstatus,ntrunc,smoothparm,window
   logical :: no_mpinc, no_delzinc, has_dpres, has_delz, taper_strat, taper_pbl, lexist, &
              taper_strat_ozone,do_smooth,has_u_inc,has_v_inc
   real rd,rv,fv,grav,ak_bot,ak_top,bk_bot,bk_top,forcing_factor,ak_top_ozone,ak_bot_ozone
@@ -466,7 +466,7 @@ PROGRAM calc_increment_ncio
                  call sptezv(0,ntrunc,4,nlons,nlats,rwork_spc,rwork_spc2,incu(:,:,k),incv(:,:,k),-1)
                  call smooth(rwork_spc, ntrunc,smoothfact)
                  call smooth(rwork_spc2,ntrunc,smoothfact)
-                 call sptezv(0,ntrunc,idrt,nlons,nlats,rwork_spc,rwork_spc2,incu(:,:,k),incv(:,:,k),1)
+                 call sptezv(0,ntrunc,4,nlons,nlats,rwork_spc,rwork_spc2,incu(:,:,k),incv(:,:,k),1)
               enddo
               values_3d_inc(:,nlats:1:-1,:) = incu ! flip lats from N->S to S->N
               values_3d_inc = forcing_factor*values_3d_inc
